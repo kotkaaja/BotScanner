@@ -9,6 +9,7 @@ import aiohttp
 from typing import List, Tuple, Dict
 import py7zr
 import rarfile
+from openai import OpenAI
 
 # --- Konfigurasi ---
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
@@ -53,7 +54,7 @@ try:
 except Exception as e:
     print(f"FATAL ERROR: Failed to initialize OpenAI client: {e}")
     exit()
-    
+
 # Sistem Level Bahaya
 class DangerLevel:
     SAFE = 1           # Hijau - Aman
