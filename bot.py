@@ -304,7 +304,7 @@ async def on_message(message):
                 inline=False
             )
         
-        embed.set_footer(text=f"Dipindai oleh Lua Security Bot • {len(scanned_files)} file dianalisis")
+        embed.set_footer(text=f"Dipindai oleh Lua Security Bot • Author @kotkaaja {len(scanned_files)} file dianalisis")
         
         # Kirim hasil sebagai reply atau edit pesan
         if processing_message:
