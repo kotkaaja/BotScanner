@@ -18,6 +18,42 @@ ALERT_CHANNEL_ID = 1234567890123456789  # ID Channel untuk alert bahaya tinggi
 ALLOWED_EXTENSIONS = ['.lua', '.txt', '.zip', '.7z', '.rar']
 TEMP_DIR = "temp_scan"
 
+print("🔧 Loading environment variables...")
+
+# --- Konfigurasi dengan Environment Variables ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    print("FATAL ERROR: BOT_TOKEN environment variable not found.")
+    print("Please set BOT_TOKEN in Railway Variables.")
+    exit()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not OPENAI_API_KEY:
+    print("FATAL ERROR: OPENAI_API_KEY or GEMINI_API_KEY environment variable not found.")
+    print("Please set OPENAI_API_KEY in Railway Variables.")
+    exit()
+
+ALERT_CHANNEL_ID = os.getenv("ALERT_CHANNEL_ID")
+if ALERT_CHANNEL_ID:
+    try:
+        ALERT_CHANNEL_ID = int(ALERT_CHANNEL_ID)
+        print(f"✅ Alert channel set: {ALERT_CHANNEL_ID}")
+    except ValueError:
+        print("WARNING: ALERT_CHANNEL_ID is not a valid integer. Disabling alerts.")
+        ALERT_CHANNEL_ID = None
+else:
+    ALERT_CHANNEL_ID = None
+    print("ℹ️ ALERT_CHANNEL_ID not set. Alert notifications disabled.")
+
+# Initialize OpenAI client
+print("🤖 Initializing OpenAI client...")
+try:
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    print("✅ OpenAI client initialized successfully.")
+except Exception as e:
+    print(f"FATAL ERROR: Failed to initialize OpenAI client: {e}")
+    exit()
+    
 # Sistem Level Bahaya
 class DangerLevel:
     SAFE = 1           # Hijau - Aman
@@ -481,7 +517,19 @@ async def on_message(message):
 
 # Run bot
 if __name__ == "__main__":
-    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        print("⚠️ Please set your BOT_TOKEN in the configuration section!")
-    else:
+    print("🚀 Starting Lua Security Scanner Bot...")
+    print("📋 Configuration Check:")
+    print(f"  📊 Bot Token: {'✅ SET' if BOT_TOKEN else '❌ MISSING'}")
+    print(f"  🤖 OpenAI Key: {'✅ SET' if OPENAI_API_KEY else '❌ MISSING'}")
+    print(f"  🔔 Alert Channel: {'✅ SET' if ALERT_CHANNEL_ID else '⚠️ NOT SET (Optional)'}")
+    print("-" * 50)
+    
+    try:
         client.run(BOT_TOKEN)
+    except discord.LoginFailure:
+        print("❌ FATAL ERROR: Invalid Discord Bot Token!")
+        print("   Please check your BOT_TOKEN in Railway Variables.")
+        exit(1)
+    except Exception as e:
+        print(f"❌ FATAL ERROR: Failed to start bot: {e}")
+        exit(1)
