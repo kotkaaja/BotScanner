@@ -555,12 +555,11 @@ async def process_analysis(message_context, attachment, choice: str):
         # Footer dengan info analyst
         analyst_text = ", ".join(sorted(list(analysts)))
         embed.set_footer(
-            text=f"Dianalisis oleh: {analyst_text} • {len(scanned_files)} file diperiksa"
-            text=f"NOTE: JIKA DI ANALISIS OLEH OPENAI ATAU GEMINI, KALIAN HARUS BACA  DESKRIPSI DENGAN TELITI!"
-            text=f"KARNA FILE ILEGAL ATAU MONET/MOONLOADER YANG PAKE CHEAT BIASA DI KATEGORIKAN LEVEL 4 (DANGEROUS) OLEH AI, TAPI KALAU DI ANALISIS MANUAL LEVEL 1 (SAFE)"
-            text=f"JADI KALIAN COBA PAKE !scan manual UNTUK MENDAPATKAN ANALISIS MANUAL ATAU CEK !help UNTUK BANTUAN"
-        )
-        
+            text= f"Dianalisis oleh: {analyst_text} • {len(scanned_files)} file diperiksa\n"
+            "NOTE: JIKA DIANLISIS OLEH AI, BACA DESKRIPSI DENGAN TELITI!\n"
+            "Script cheat/ilegal biasa dikategorikan DANGEROUS/BERBAHAYA oleh AI. padahal aman\n"
+            "Gunakan !scan manual atau !help jika Anda ragu"
+            )
         # Send/edit response
         if processing_message:
             await processing_message.edit(content=None, embed=embed)
