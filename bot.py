@@ -153,22 +153,16 @@ AI_PROMPT = """
 Anda adalah seorang ahli keamanan siber Lua yang sangat tegas dan berpengalaman. Analisis skrip Lua berikut dengan teliti.
 
 ATURAN UTAMA ANDA:
-1. PRIORITAS #1: DETEKSI PENCURIAN DATA. Jika Anda melihat kombinasi fungsi pengumpul data (`sampGetPlayerNickname`, `sampGetCurrentServerAddress`) DENGAN fungsi pengiriman data (`discord.com/api/webhooks`, `pastebin.com`, dan segala pola pencurian data di internet maupun script), Anda HARUS mengklasifikasikannya sebagai DANGEROUS (Level 4).
+1. PRIORITAS #1: DETEKSI PENCURIAN DATA. Jika Anda melihat kombinasi fungsi pengumpul data (`sampGetPlayerNickname`, `sampGetCurrentServerAddress`) DENGAN fungsi pengiriman data (`discord.com/api/webhooks`, `pastebin.com`, `http.request`), Anda HARUS mengklasifikasikannya sebagai DANGEROUS (Level 4).
 
 2. ANALISIS KONTEKS FUNGSI. Tentukan apakah pola mencurigakan relevan dengan tujuan utama skrip:
    - Webhook pada mod sederhana = DANGEROUS (Level 4)
-   - `io.open` pada skrip konfigurasi = SAFE (Level 1) 
+   - `io.open` pada skrip konfigurasi = SAFE (Level 1)
    - `loadstring` dengan kode terenkripsi = VERY_SUSPICIOUS (Level 3)
 
 3. IDENTIFIKASI ALAT KEAMANAN. Jika skrip justru MEMBLOKIR atau MENDETEKSI pola berbahaya, itu adalah SAFE (Level 1).
 
 4. ANALISIS SEMUA FILE. Berikan analisis singkat tentang tujuan skrip, bahkan jika tidak ada pola mencurigakan.
-
-5. WALAUPUN ADA POLA, JIKA KODE UTAMA TIDAK BERHUBUNGAN DENGAN PENCURIAN DATA, BERIKAN LEVEL YANG LEBIH RENDAH.
-
-6. Selalu jelaskan tujuan utama skrip.
-
-7. Jawaban HARUS valid JSON tanpa teks tambahan.
 
 SKALA LEVEL:
 - Level 1 (SAFE): Skrip aman, tidak ada ancaman
@@ -358,6 +352,9 @@ async def scan_file_content(file_path: str, choice: str) -> Tuple[List[Dict], Di
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Override default help command
+bot.remove_command('help')
 
 def get_level_emoji_color(level: int) -> Tuple[str, int]:
     """Mendapatkan emoji dan warna berdasarkan level bahaya"""
