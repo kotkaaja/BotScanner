@@ -65,7 +65,6 @@ except Exception as e:
 class DangerLevel:
     SAFE, SUSPICIOUS, VERY_SUSPICIOUS, DANGEROUS = 1, 2, 3, 4
 
-# --- KAMUS POLA DIKEMBALIKAN SEPERTI SEMULA DENGAN DESKRIPSI LENGKAP ---
 SUSPICIOUS_PATTERNS = {
     "discord.com/api/webhooks": {"level": DangerLevel.DANGEROUS, "description": "Discord webhook - sangat mungkin untuk mencuri data pengguna"},
     "pastebin.com": {"level": DangerLevel.DANGEROUS, "description": "Upload ke Pastebin - kemungkinan besar untuk mengirim data curian"},
@@ -86,22 +85,18 @@ SUSPICIOUS_PATTERNS = {
 
 # --- Fungsi Analisis AI ---
 async def analyze_with_ai(code_snippet: str, detected_patterns: List[str], file_name: str) -> Dict:
-    # (Fungsi ini tetap sama seperti versi sebelumnya yang paling akurat)
     try:
         prompt = f"""
         Anda adalah seorang ahli keamanan siber Lua yang sangat tegas dan tidak mentolerir pencurian data. Analisis skrip Lua berikut dengan nama file '{file_name}'.
-
         ATURAN UTAMA ANDA:
-        1.  **PRIORITAS #1: DETEKSI PENCURIAN DATA.** Jika Anda melihat kombinasi apapun dari fungsi pengumpul data (`sampGetPlayerNickname`, `sampGetCurrentServerAddress`, dll.) DENGAN fungsi pengiriman data (`discord.com/api/webhooks`, `http.request`), Anda HARUS mengklasifikasikannya sebagai **DANGEROUS (Level 4)**. Tidak ada pengecualian kecuali ada bukti 100% jelas itu untuk laporan crash yang disetujui pengguna. Judul seperti "Keylogger data" adalah bukti kejahatan.
-        2.  **ANALISIS KONTEKS FUNGSI.** Untuk setiap pola mencurigakan yang terdeteksi (`{', '.join(detected_patterns) if detected_patterns else 'Tidak ada'}`), tentukan apakah itu relevan dengan tujuan utama skrip. Jika sebuah skrip modifikasi mobil sederhana tiba-tiba memiliki webhook, itu adalah **DANGEROUS (Level 4)** karena tidak relevan. Namun, jika skrip konfigurasi menggunakan `io.open` untuk menyimpan pengaturan, itu **SAFE (Level 1)**.
-        3.  **IDENTIFIKASI ALAT KEAMANAN.** Jika skrip justru MEMBLOKIR atau MENDETEKSI pola berbahaya (misalnya, anti-keylogger), itu adalah **SAFE (Level 1)**.
+        1.  **PRIORITAS #1: DETEKSI PENCURIAN DATA.** Jika Anda melihat kombinasi apapun dari fungsi pengumpul data (`sampGetPlayerNickname`, `sampGetCurrentServerAddress`, dll.) DENGAN fungsi pengiriman data (`discord.com/api/webhooks`, `http.request`), Anda HARUS mengklasifikasikannya sebagai **DANGEROUS (Level 4)**. Tidak ada pengecualian.
+        2.  **ANALISIS KONTEKS FUNGSI.** Untuk setiap pola mencurigakan yang terdeteksi, tentukan apakah itu relevan dengan tujuan utama skrip. Jika sebuah skrip modifikasi mobil sederhana tiba-tiba memiliki webhook, itu adalah **DANGEROUS (Level 4)**. Namun, jika skrip konfigurasi menggunakan `io.open` untuk menyimpan pengaturan, itu **SAFE (Level 1)**.
+        3.  **IDENTIFIKASI ALAT KEAMANAN.** Jika skrip justru MEMBLOKIR atau MENDETEKSI pola berbahaya, itu adalah **SAFE (Level 1)**.
         4.  **BERIKAN ANALISIS UNTUK SEMUA FILE.** Meskipun tidak ada pola mencurigakan, tetap berikan analisis singkat tentang tujuan skrip.
-
         Berikut adalah isi skripnya:
         ```lua
         {code_snippet[:3500]}
         ```
-
         Berikan jawaban HANYA dalam format JSON berikut:
         {{
             "danger_level": <1-4>,
@@ -126,9 +121,16 @@ async def analyze_with_ai(code_snippet: str, detected_patterns: List[str], file_
 # --- Fungsi Utilitas & Scanner ---
 def extract_archive(file_path: str, extract_to: str) -> bool:
     try:
-        if file_path.endswith('.zip'): with zipfile.ZipFile(file_path, 'r') as z: z.extractall(extract_to)
-        elif file_path.endswith('.7z'): with py7zr.SevenZipFile(file_path, mode='r') as z: z.extractall(extract_to)
-        elif file_path.endswith('.rar'): with rarfile.RarFile(file_path) as z: z.extractall(extract_to)
+        # --- BLOK INI TELAH DIPERBAIKI ---
+        if file_path.endswith('.zip'):
+            with zipfile.ZipFile(file_path, 'r') as z:
+                z.extractall(extract_to)
+        elif file_path.endswith('.7z'):
+            with py7zr.SevenZipFile(file_path, mode='r') as z:
+                z.extractall(extract_to)
+        elif file_path.endswith('.rar'):
+            with rarfile.RarFile(file_path) as z:
+                z.extractall(extract_to)
         return True
     except Exception as e:
         print(f"Error extracting {file_path}: {e}")
@@ -144,7 +146,7 @@ async def scan_file_content(file_path: str) -> Tuple[List[Dict], Dict]:
                 detected_issues.append({
                     'pattern': pattern,
                     'line': content[:match.start()].count('\n') + 1,
-                    'description': info['description'] # Menambahkan deskripsi ke setiap temuan
+                    'description': info['description']
                 })
 
         detected_patterns_for_ai = list(dict.fromkeys(issue['pattern'] for issue in detected_issues))
@@ -232,10 +234,9 @@ async def on_message(message):
         embed.description = (f"**Tujuan Script:** {best_summary.get('script_purpose', 'N/A')}\n"
                            f"**Ringkasan AI:** {best_summary.get('analysis_summary', 'N/A')}")
 
-        # --- TAMPILAN LAPORAN DIPERBARUI UNTUK MENUNJUKKAN DESKRIPSI ---
         if all_issues:
             field_value = ""
-            for filepath, issue in all_issues[:4]: # Batasi hingga 4 untuk keringkasan
+            for filepath, issue in all_issues[:4]:
                 field_value += f"📁 `{filepath}` (Line {issue['line']})\n"
                 field_value += f"🔍 **Pattern:** `{issue['pattern']}`\n"
                 field_value += f"💡 **Alasan:** {issue['description']}\n\n"
