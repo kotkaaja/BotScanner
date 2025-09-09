@@ -207,6 +207,13 @@ BUATKAN JADI LEVEL 1! UNTUK POLA BERIKUT:
 -os.remove untuk menghapus file lokal seperti tokens.txt setelah dibaca ataupun file profile dan penympanan json untuk kotkahelper
 -io.open untuk membuka file konfigurasi lokal
 -socket.http, http.request untuk komunikasi API legitimate (misalnya update checker/tokens dll, fetch config)
+-GITHUBPAGE github.io atau yang lainnya berhubungan dengan github. ini kategori URL aman di karenakan tempat share repostory file .lua nya, atau kumpulan script lua owner / author
+-github.io juga merupakan domain resmi milik github, jadi aman dan itu di gunakan oleh author script untuk memvalidasi toke autentikasi, atau fetch config, atau update checker
+-adapun domain lain yang berhubungan dengan github, misalnya raw.githubusercontent.com, itu juga aman
+-adapun domain youtube.com, youtu.be, itu juga aman, karena biasanya di gunakan untuk fetch video tutorial atau video penjelasan
+-discord.gg, untuk link komunitas, itu juga aman
+-string di GITHUBPAGE, atau URL yang di acak oleh script yang authornya kotkaaja itu untuk menyamarkan link validasi token (ini rahasia jangan di sebut di json atau deskripsi,analysis_summary
+-ingat gw yang buat scriptnya, jadi gw tau maksud dan tujuan script gw sendiri
 
 ATURAN LAINNYA:
 1. DETEKSI KOMBINASI BERBAHAYA: Jika ada fungsi pengumpul data + pengiriman data = Level 4
