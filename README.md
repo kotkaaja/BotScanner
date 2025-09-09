@@ -1,98 +1,181 @@
+
 # 🛡️ Lua Script Security Scanner Bot v2.0
 
 Bot Discord cerdas generasi baru dengan sistem analis berlapis untuk menganalisis dan mendeteksi script Lua berbahaya secara akurat dan andal.
+
+---
 
 ## ✨ Fitur Utama
 
 ### 🧠 Sistem Analis Berlapis & Cerdas
 Bot menggunakan sistem fallback tiga tingkat untuk memastikan waktu aktif dan akurasi maksimum:
-1.  **Analyst Utama (OpenAI)**: Menggunakan GPT-4o untuk analisis konteks terdalam.
-2.  **Analyst Cadangan (Gemini)**: Jika OpenAI gagal (misalnya, karena kuota habis), bot secara otomatis beralih ke Google Gemini.
-3.  **Analyst Manual**: Jika kedua AI gagal, bot akan kembali ke analisis berbasis pola bawaan.
-Logika AI juga telah diperketat untuk secara agresif mendeteksi pencurian data dan memahami konteks script (misalnya, membedakan alat keamanan dari malware).
+1. **Analyst Utama (OpenAI)** → Analisis konteks terdalam.
+2. **Analyst Cadangan (Gemini)** → Dipakai jika OpenAI gagal (misalnya kuota habis).
+3. **Analyst Manual** → Jika kedua AI gagal, bot kembali ke analisis pola bawaan.
+
+Logika AI diperketat untuk mendeteksi pencurian data secara agresif dan memahami konteks script (misalnya, membedakan alat keamanan dari malware).
+
+### 🎯 4 Level Analisis Keamanan
+- **🟢 Level 1 (SAFE)**: Script aman, tidak ada pola berbahaya
+- **🟡 Level 2 (SUSPICIOUS)**: Mencurigakan tapi mungkin legitimate 
+- **🟠 Level 3 (VERY SUSPICIOUS)**: Sangat mencurigakan (obfuscated/encoded)
+- **🔴 Level 4 (DANGEROUS)**: Sangat berbahaya (data theft confirmed)
 
 ### 🕹️ Kontrol Penuh dengan Perintah
-Selain mode unggah-dan- pindai otomatis, Anda dapat secara manual memilih analis yang akan digunakan dengan perintah `!scan`:
-- `!scan openai` + file: Memaksa pemindaian dengan OpenAI.
-- `!scan gemini` + file: Memaksa pemindaian dengan Gemini.
-- `!scan manual` + file: Memaksa pemindaian dengan mode manual.
+Selain mode unggah-dan-pindai otomatis, Anda dapat memilih analis manual dengan perintah `!scan`:
+- `!scan openai` + file → Pakai OpenAI
+- `!scan gemini` + file → Pakai Gemini
+- `!scan manual` + file → Pakai mode manual
+- `!scan auto` + file → Fallback otomatis (OpenAI → Gemini → Manual)
 
 ### 🔑 Dukungan Multi-API Key
-Untuk ketahanan maksimum terhadap batas kuota, bot mendukung banyak API key untuk setiap layanan. Jika satu kunci mencapai batasnya, bot akan secara otomatis mencoba kunci berikutnya dalam daftar.
+Bot mendukung banyak API key untuk setiap layanan.  
+Jika satu kunci mencapai limit, bot otomatis pindah ke kunci berikutnya.
 
 ### 📁 Dukungan Format Luas
-- **Script Tunggal**: `.lua`, `.txt`
-- **Arsip**: `.zip`, `.7z`, `.rar` (ekstraksi dan pemindaian otomatis semua file di dalamnya)
+- **Script tunggal**: `.lua`, `.txt`  
+- **Arsip**: `.zip`, `.7z`, `.rar` (otomatis diekstrak & dipindai semua file)
 
 ### 🚨 Deteksi Pola Kontekstual
-Mendeteksi 15+ pola berbahaya dan menggunakan AI untuk menentukan apakah penggunaannya wajar atau berbahaya dalam konteks tujuan script.
+Bot mendeteksi **15+ pola berbahaya** dan memanfaatkan AI untuk memutuskan apakah penggunaan pola itu wajar atau berbahaya.
 
 ---
+
 ## 🚀 Pengaturan Cepat
 
-### 1. Dapatkan Kode
+### 🚨 Advanced Pattern Detection
+Mendeteksi 15+ pola berbahaya termasuk:
+- **Data Theft**: `discord.com/api/webhooks`, `sendToDiscordEmbed`
+- **System Access**: `os.execute`, `os.remove`, `io.popen`
+- **Player Data**: `sampGetPlayerNickname`, `sampGetCurrentServerAddress`
+- **Obfuscation**: `loadstring`, `LuaObfuscator.com`, `eval`
+- **Network**: `socket.http`, `http.request`, `http://`
+
+---
+## 📊 Contoh Hasil Scan
+
+Jika Anda mengunggah file `stealer.lua`, bot akan merespons seperti ini:
+
+### Mode Auto (OpenAI → fallback jika gagal)
+
+**🔍 Hasil Analisis File:** `stealer.lua`
+
+- **Deteksi Pola**:  
+  - `sampGetPlayerNickname` ✅  
+  - `sampGetCurrentServerAddress` ✅  
+  - `os.execute` (akses sistem) ✅  
+
+- **Kesimpulan AI**:  
+  Script mencoba **mengambil nickname + IP server**, lalu mengirim ke server eksternal.  
+  → **Ini terindikasi sebagai pencurian data (MALICIOUS).**
+
+**📢 Rekomendasi:**  
+Hapus file ini segera. Jangan jalankan di environment lokal Anda.
+
+---
+
+
+
+## 🚀 Quick Setup
+
+### 1. Clone Repository
 ```bash
-# Fork atau clone repository ini
-git clone [https://github.com/kotkaaja/BotScanner.git/](https://github.com/kotkaaja/BotScanner.git/)
-cd lua-scanner-bot
-2. Instal Ketergantungan
-Pastikan file requirements.txt Anda sudah benar, lalu jalankan:
+git clonehttps://github.com/kotkaaja/BotScanner.git
+cd BotScanner
+```
 
-Bash
-
+### 2. Install Dependencies
+```bash
 pip install -r requirements.txt
-3. Konfigurasi Variabel Lingkungan
-Bot sekarang dikonfigurasi sepenuhnya melalui Variabel Lingkungan di hosting Anda (misalnya, Railway, Heroku).
+```
 
-🔧 Konfigurasi
-Variabel Lingkungan (Environment Variables)
-Atur variabel-variabel berikut di dashboard hosting Anda.
+### 3. Configuration
+```bash
+# Copy environment file
+cp .env.example .env
 
-Variabel	Deskripsi	Wajib?	Contoh Nilai
-BOT_TOKEN	Token bot Discord Anda.	✅	MTA...
-OPENAI_API_KEYS	Satu atau lebih API key OpenAI, dipisahkan koma.	✅ (Salah satu)	sk-...,sk-...
-GEMINI_API_KEYS	Satu atau lebih API key Gemini, dipisahkan koma.	✅ (Salah satu)	AIza...,AIza...
-ALLOWED_CHANNEL_IDS	Batasi bot ke channel tertentu. Pisahkan dengan koma untuk >1.	❌	12345...,98765...
-ALERT_CHANNEL_ID	Channel khusus untuk notifikasi file berbahaya (Level 4).	❌	56789...
+# Edit dengan token dan API key Anda
+nano .env
+```
 
-Ekspor ke Spreadsheet
-Catatan: Bot memerlukan setidaknya satu API key, baik OPENAI_API_KEYS atau GEMINI_API_KEYS, untuk dapat berfungsi dengan analisis AI.
+### 4. Run Locally
+```bash
+python bot.py
+```
 
-Izin Bot (Bot Permissions)
-Bot memerlukan izin berikut di server Anda:
+## 🚂 Railway Deployment
 
-Membaca Pesan/Lihat Channel
+### 1. Connect GitHub ke Railway
+1. Fork repository ini
+2. Buka [Railway.app](https://railway.app)
+3. Klik "Deploy from GitHub"
+4. Pilih repository yang di-fork
 
-Mengirim Pesan
+### 2. Set Environment Variables
+Di Railway dashboard, tambahkan variables:
+```
+BOT_TOKEN=your_discord_bot_token
+OPENAI_API_KEY=your_openai_api_key
+ALERT_CHANNEL_ID=your_channel_id (optional)
+```
 
-Menyematkan Tautan
+### 3. Deploy
+Railway akan otomatis build dan deploy bot Anda!
 
-Melampirkan File
+## 🔧 Configuration
 
-📖 Contoh Penggunaan
-Mode Otomatis (Upload Langsung)
-Cukup unggah file .lua, .txt, atau arsip (.zip, .7z, .rar) ke channel yang diizinkan. Bot akan otomatis memindai menggunakan sistem fallback (OpenAI → Gemini → Manual).
+Bot ini memakai **environment variables** untuk semua setting.  
+Bisa diatur lewat `.env` file (lokal) atau langsung di dashboard hosting.
 
-Mode Manual (Dengan Perintah)
-Untuk memaksa penggunaan analis tertentu, gunakan perintah !scan saat mengunggah file.
-Contoh: Tulis !scan gemini di kolom pesan, lalu unggah file Anda dalam pesan yang sama.
+### 1. File `.env` (opsional untuk development)
+Buat file `.env` di root project:
 
-📊 Contoh Hasil
-🟢 File Aman
-Bot akan memberikan ringkasan yang dihasilkan AI tentang tujuan script, bahkan jika aman.
+```env
+BOT_TOKEN=your_discord_bot_token_here
+OPENAI_API_KEYS=sk-xxx,sk-yyy
+GEMINI_API_KEYS=AIza-xxx,AiZa-yyy
+ALLOWED_CHANNEL_IDS=1234567890,9876543210
+ALERT_CHANNEL_ID=1122334455
 
-✅ AMAN
-Tujuan Script: Library untuk mengelola koneksi HTTPS dan mendeteksi skrip berbahaya.
-Ringkasan AI: Skrip ini berfungsi sebagai alat keamanan (anti-keylogger) yang sah...
-🔴 File Berbahaya
-Laporan akan menyoroti bahaya, menjelaskan tujuan jahatnya, dan mencantumkan pola yang terdeteksi.
 
-🚨 BAHAYA TINGGI
-Tujuan Script: Pencuri data (Keylogger).
-Ringkasan AI: AI dengan keyakinan tinggi mengidentifikasi skrip ini sebagai keylogger. Skrip ini mengambil nama pemain, alamat server, dan input pengguna, lalu mengirimkannya ke Discord webhook. Ini adalah malware.
+### Bot Permissions
+Bot memerlukan permissions:
+- `Read Messages`
+- `Send Messages`
+- `Embed Links`
+- `Attach Files`
 
-📝 Detail Pola Terdeteksi
-📁 keylogger.lua (Line 25)
-💡 Alasan: Discord webhook - sangat mungkin untuk mencuri data pengguna
+## 📖 Usage Examples
 
-Dianalisis oleh: OpenAI • 1 file
+### Scan Single File
+Upload file `.lua` atau `.txt` ke channel dimana bot aktif.
+
+### Scan Archive
+Upload file `.zip`, `.7z`, atau `.rar` berisi multiple script.
+
+### Response Examples
+
+#### 🟢 Safe File
+```
+✅ Hasil Scan: script.lua
+File Aman - Tidak ditemukan pola berbahaya
+📊 Files Scanned: 1 file(s)
+```
+
+#### 🔴 Dangerous File
+```
+🔴 Hasil Scan: malware.lua
+🚨 BAHAYA TINGGI - File mengandung kode berbahaya yang dapat mencuri data!
+
+🔴 Sangat Berbahaya
+📁 script.lua (Line 15)
+🔍 Pattern: discord.com/api/webhooks
+💡 Discord webhook - sangat mungkin untuk mencuri data pengguna
+```
+
+## 🧠 AI Analysis Features
+
+### Smart Context Detection
+```lua
+-- AMAN (AI detects legitimate usage)
+local config = io.open('moonloader/config.txt', '"# BotScanner" 
