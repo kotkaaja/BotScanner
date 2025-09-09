@@ -556,6 +556,9 @@ async def process_analysis(message_context, attachment, choice: str):
         analyst_text = ", ".join(sorted(list(analysts)))
         embed.set_footer(
             text=f"Dianalisis oleh: {analyst_text} • {len(scanned_files)} file diperiksa"
+            text=f"NOTE: JIKA DI ANALISIS OLEH OPENAI ATAU GEMINI, KALIAN HARUS BACA  DESKRIPSI DENGAN TELITI!"
+            text=f"KARNA FILE ILEGAL ATAU MONET/MOONLOADER YANG PAKE CHEAT BIASA DI KATEGORIKAN LEVEL 4 (DANGEROUS) OLEH AI, TAPI KALAU DI ANALISIS MANUAL LEVEL 1 (SAFE)"
+            text=f"JADI KALIAN COBA PAKE !scan manual UNTUK MENDAPATKAN ANALISIS MANUAL ATAU CEK !help UNTUK BANTUAN"
         )
         
         # Send/edit response
