@@ -46,13 +46,12 @@ else:
     ALERT_CHANNEL_ID = None
     print("ℹ️ ALERT_CHANNEL_ID not set. Alert notifications disabled.")
 
-# --- Di bagian tengah kode Anda ---
+
 
 print("🤖 Initializing OpenAI client...")
 try:
-    # CUKUP INISIALISASI SEPERTI INI, TANPA HTTPX:
+    # Gunakan inisialisasi paling simpel ini
     openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-    
     print("✅ OpenAI client initialized successfully.")
 except Exception as e:
     print(f"FATAL ERROR: Failed to initialize OpenAI client: {e}")
