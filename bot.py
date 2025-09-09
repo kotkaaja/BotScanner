@@ -9,7 +9,6 @@ import aiohttp
 from typing import List, Tuple, Dict
 import py7zr
 import rarfile
-import httpx
 from openai import AsyncOpenAI
 
 # --- Konfigurasi ---
@@ -47,13 +46,13 @@ else:
     ALERT_CHANNEL_ID = None
     print("ℹ️ ALERT_CHANNEL_ID not set. Alert notifications disabled.")
 
-# Initialize OpenAI client
+# --- Di bagian tengah kode Anda ---
+
 print("🤖 Initializing OpenAI client...")
 try:
-    # Secara eksplisit buat http client untuk menghindari masalah proxy
-    http_client = httpx.AsyncClient(proxies=None)
-    # Gunakan AsyncOpenAI karena bot Anda bersifat asynchronous
-    openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+    # CUKUP INISIALISASI SEPERTI INI, TANPA HTTPX:
+    openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    
     print("✅ OpenAI client initialized successfully.")
 except Exception as e:
     print(f"FATAL ERROR: Failed to initialize OpenAI client: {e}")
