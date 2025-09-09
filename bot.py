@@ -79,7 +79,6 @@ SUSPICIOUS_PATTERNS = {
 async def analyze_with_ai(code_snippet: str, detected_patterns: List[str], file_name: str) -> Dict:
     """Menggunakan OpenAI GPT untuk analisis konteks, tujuan, dan keamanan script."""
     try:
-        # --- PERUBAHAN UTAMA ADA DI PROMPT INI ---
         prompt = f"""
         Anda adalah seorang ahli keamanan siber Lua yang sangat teliti. Analisis skrip Lua berikut dengan nama file '{file_name}'.
 
@@ -171,6 +170,7 @@ async def scan_file_content(file_path: str) -> Tuple[List[Dict], str, Dict]:
                         'line': content[:match.start()].count('\n') + 1
                     })
         
+        # Panggil AI hanya jika ada pola yang terdeteksi
         if detected_patterns_for_ai:
             file_name = os.path.basename(file_path)
             ai_summary = await analyze_with_ai(content, detected_patterns_for_ai, file_name)
@@ -208,7 +208,7 @@ async def on_message(message):
     file_extension = os.path.splitext(attachment.filename)[1].lower()
 
     if file_extension not in ALLOWED_EXTENSIONS:
-        await message.channel.send(f"❌ **Format File Tidak Didukung**: `{attachment.filename}`.\n✅ Format yang didukung: `{', '.join(ALLOWED_EXTENSIONS)}`")
+        await message.reply(f"❌ **Format File Tidak Didukung**: `{attachment.filename}`.\n✅ Format yang didukung: `{', '.join(ALLOWED_EXTENSIONS)}`")
         return
 
     processing_message = None
@@ -220,10 +220,10 @@ async def on_message(message):
             current_time = time.time()
             if user_id in zip_cooldowns and (current_time - zip_cooldowns[user_id]) < ZIP_COOLDOWN_SECONDS:
                 remaining_time = int(ZIP_COOLDOWN_SECONDS - (current_time - zip_cooldowns[user_id]))
-                await message.channel.send(f"⏳ **Cooldown Aktif**. Harap tunggu **{remaining_time} detik** lagi sebelum mengirim arsip baru.")
+                await message.reply(f"⏳ **Cooldown Aktif**. Harap tunggu **{remaining_time} detik** lagi sebelum mengirim arsip baru.")
                 return
             zip_cooldowns[user_id] = current_time
-            processing_message = await message.channel.send(f"⚙️ **Memproses Arsip...** File `{attachment.filename}` sedang dianalisis. Ini mungkin perlu beberapa saat.")
+            processing_message = await message.reply(f"⚙️ **Memproses Arsip...** File `{attachment.filename}` sedang dianalisis. Ini mungkin perlu beberapa saat.")
 
         await attachment.save(download_path)
         
@@ -252,66 +252,67 @@ async def on_message(message):
             if issues: all_issues.extend([(attachment.filename, issue) for issue in issues])
             if ai_summary: all_ai_summaries.append(ai_summary)
 
+        # --- PERUBAHAN LOGIKA UTAMA: AI MENJADI PENENTU AKHIR ---
         max_level = DangerLevel.SAFE
-        if all_issues and not all_ai_summaries:
-            max_level = max((issue[1]['level'] for issue in all_issues), default=DangerLevel.SAFE)
-        
+        best_summary = {}
+
         if all_ai_summaries:
-            ai_max_level = max((summary.get('danger_level', DangerLevel.SAFE) for summary in all_ai_summaries), default=DangerLevel.SAFE)
-            max_level = ai_max_level
+            # Jika AI memberikan analisis, gunakan hasilnya sebagai penentu utama
+            best_summary = max(all_ai_summaries, key=lambda x: x.get('danger_level', 0), default={})
+            max_level = best_summary.get('danger_level', DangerLevel.SAFE)
+        elif not all_issues:
+            # Jika tidak ada pola terdeteksi sama sekali, file aman
+            max_level = DangerLevel.SAFE
+        else:
+            # Fallback: jika ada pola tapi AI gagal, gunakan level pola tertinggi
+            max_level = max((issue[1]['level'] for issue in all_issues), default=DangerLevel.SUSPICIOUS)
 
         emoji, color = get_level_emoji_color(max_level)
-        embed = discord.Embed(title=f"{emoji} Hasil Scan: `{attachment.filename}`", color=color)
+        embed = discord.Embed(title=f"Hasil Scan: {attachment.filename}", color=color)
         
-        if all_ai_summaries:
-            best_summary = max(all_ai_summaries, key=lambda x: x.get('danger_level', 0), default={})
+        # Judul utama dan deskripsi berdasarkan hasil akhir
+        level_titles = {
+            DangerLevel.SAFE: f"✅ **AMAN** - AI menyimpulkan skrip ini aman digunakan.",
+            DangerLevel.SUSPICIOUS: f"🤔 **MENCURIGAKAN** - AI menemukan fungsi berisiko yang perlu diperiksa.",
+            DangerLevel.VERY_SUSPICIOUS: f"⚠️ **SANGAT MENCURIGAKAN** - AI mendeteksi kode yang disembunyikan atau berisiko tinggi.",
+            DangerLevel.DANGEROUS: f"🚨 **BAHAYA TINGGI** - AI mengindikasikan file ini berbahaya!"
+        }
+        embed.title = f"{emoji} {level_titles.get(max_level, 'Hasil Scan')}"
+
+        # Tambahkan Analisis AI jika tersedia
+        if best_summary:
             embed.add_field(
                 name="🧠 Analisis AI",
                 value=f"**Tujuan Script:** {best_summary.get('script_purpose', 'N/A')}\n"
                       f"**Ringkasan:** {best_summary.get('analysis_summary', 'N/A')}",
                 inline=False
             )
-
-        if max_level == DangerLevel.SAFE:
-            embed.description = "✅ **File Aman** - Analisis AI tidak menemukan niat berbahaya."
         else:
-            descriptions = {
-                DangerLevel.DANGEROUS: "🚨 **BAHAYA TINGGI** - AI mengindikasikan file ini berbahaya!",
-                DangerLevel.VERY_SUSPICIOUS: "⚠️ **SANGAT MENCURIGAKAN** - AI mendeteksi kode yang disembunyikan atau berisiko tinggi.",
-                DangerLevel.SUSPICIOUS: "🤔 **MENCURIGAKAN** - AI menemukan fungsi berisiko yang perlu diperiksa."
-            }
-            embed.description = descriptions.get(max_level, "🤔 **MENCURIGAKAN**")
+            embed.description = "Tidak ada pola mencurigakan yang terdeteksi."
+
+        # Tampilkan daftar pola yang terdeteksi untuk transparansi (jika ada)
+        if all_issues:
+            field_value = ""
+            for filepath, issue in all_issues[:5]: # Batasi hingga 5 untuk keringkasan
+                field_value += f"📁 `{filepath}` (Line {issue['line']}) - Pattern: `{issue['pattern']}`\n"
+            if len(all_issues) > 5:
+                field_value += f"... dan {len(all_issues) - 5} lainnya."
             
-            if all_issues:
-                issues_by_level = {}
-                for filepath, issue in all_issues:
-                    level = issue['level']
-                    issues_by_level.setdefault(level, []).append((filepath, issue))
-                
-                for level in sorted(issues_by_level.keys(), reverse=True):
-                    level_emoji, _ = get_level_emoji_color(level)
-                    issues = issues_by_level[level]
-                    field_value = ""
-                    for filepath, issue in issues[:3]:
-                        field_value += f"📁 `{filepath}` (Line {issue['line']})\n"
-                        field_value += f"🔍 Pattern: `{issue['pattern']}`\n"
-                    if len(issues) > 3:
-                        field_value += f"... dan {len(issues) - 3} lainnya."
-                    
-                    level_names = {
-                        DangerLevel.DANGEROUS: "Pola Berbahaya Terdeteksi",
-                        DangerLevel.VERY_SUSPICIOUS: "Pola Sangat Mencurigakan Terdeteksi", 
-                        DangerLevel.SUSPICIOUS: "Pola Mencurigakan Terdeteksi"
-                    }
-                    embed.add_field(name=f"{level_emoji} {level_names.get(level, 'Unknown')}", value=field_value, inline=False)
+            embed.add_field(
+                name="📝 Pola Mencurigakan Terdeteksi",
+                value=field_value,
+                inline=False
+            )
         
         embed.set_footer(text=f"Dipindai oleh Lua Security Bot • {len(scanned_files)} file dianalisis")
         
+        # Kirim hasil sebagai reply atau edit pesan
         if processing_message:
             await processing_message.edit(content=None, embed=embed)
         else:
-            await message.channel.send(embed=embed)
+            await message.reply(embed=embed)
         
+        # Kirim notifikasi ke channel alert jika berbahaya
         if max_level >= DangerLevel.DANGEROUS and ALERT_CHANNEL_ID:
             try:
                 alert_channel = client.get_channel(ALERT_CHANNEL_ID)
@@ -323,7 +324,7 @@ async def on_message(message):
     except Exception as e:
         error_message = f"❌ Terjadi error saat memindai file: {str(e)}"
         if processing_message: await processing_message.edit(content=error_message, embed=None)
-        else: await message.channel.send(error_message)
+        else: await message.reply(error_message)
     finally:
         if os.path.exists(download_path):
             os.remove(download_path)
