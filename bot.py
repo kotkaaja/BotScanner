@@ -187,9 +187,6 @@ BAHKAN JIKA:
 TETAP HARUS LEVEL 4! Tidak ada pengecualian!
 
 YANG DI BAWAH INI MUTLAK MASUK KATEGORI LEVEL 1! APAPUN URUSANNYA MAUPUN ITU CHEAT ATAU YANG LAINNYA, UNTUK POLA BERIKUT:
--io.popen untuk membaca/menyimpan file lokal seperti tokens.txt untuk menyimpan token autentikasi
--os.remove untuk menghapus file lokal seperti tokens.txt setelah dibaca ataupun file profile dan penympanan json untuk kotkahelper
--io.open untuk membuka file konfigurasi lokal
 -socket.http, http.request untuk komunikasi API legitimate (misalnya update checker/tokens dll, fetch config)
 -GITHUBPAGE github.io atau yang lainnya berhubungan dengan github. ini kategori URL aman di karenakan tempat share repostory file .lua nya, atau kumpulan script lua owner / author
 -github.io juga merupakan domain resmi milik github, jadi aman dan itu di gunakan oleh author script untuk memvalidasi toke autentikasi, atau fetch config, atau update checker
