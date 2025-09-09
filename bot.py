@@ -1,4 +1,5 @@
 import discord
+from discord.ext import commands
 import os
 import zipfile
 import shutil
@@ -8,262 +9,652 @@ import asyncio
 from typing import List, Tuple, Dict
 import py7zr
 import rarfile
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
+import google.generativeai as genai
 import time
+import itertools
 
-# --- Konfigurasi ---
+# ============================
+# KONFIGURASI ENVIRONMENT
+# ============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEYS = os.getenv("OPENAI_API_KEYS", "").split(',')
+GEMINI_API_KEYS = os.getenv("GEMINI_API_KEYS", "").split(',')
 ALERT_CHANNEL_ID = os.getenv("ALERT_CHANNEL_ID")
 ALLOWED_CHANNEL_IDS = os.getenv("ALLOWED_CHANNEL_IDS")
 
+# Konstanta
 ALLOWED_EXTENSIONS = ['.lua', '.txt', '.zip', '.7z', '.rar']
 TEMP_DIR = "temp_scan"
 ZIP_COOLDOWN_SECONDS = 180
 zip_cooldowns = {}
 
-# --- Validasi Konfigurasi Awal ---
-print("🔧 Loading environment variables...")
+# ============================
+# VALIDASI & INISIALISASI
+# ============================
+print("🔧 Memuat konfigurasi environment...")
+
+# Validasi bot token
 if not BOT_TOKEN:
-    print("FATAL ERROR: BOT_TOKEN environment variable not found.")
-    exit()
-if not OPENAI_API_KEY:
-    print("FATAL ERROR: OPENAI_API_KEY or GEMINI_API_KEY environment variable not found.")
+    print("❌ FATAL ERROR: BOT_TOKEN tidak ditemukan!")
     exit()
 
+# Bersihkan dan validasi API keys
+OPENAI_API_KEYS = [key.strip() for key in OPENAI_API_KEYS if key.strip()]
+GEMINI_API_KEYS = [key.strip() for key in GEMINI_API_KEYS if key.strip()]
+
+if not OPENAI_API_KEYS and not GEMINI_API_KEYS:
+    print("⚠️ WARNING: Tidak ada API key yang tersedia. Bot akan berjalan dalam mode MANUAL saja.")
+else:
+    print(f"✅ Berhasil memuat {len(OPENAI_API_KEYS)} OpenAI key(s) dan {len(GEMINI_API_KEYS)} Gemini key(s)")
+
+# Validasi channel settings
 if ALERT_CHANNEL_ID:
     try:
         ALERT_CHANNEL_ID = int(ALERT_CHANNEL_ID)
-        print(f"✅ Alert channel set: {ALERT_CHANNEL_ID}")
     except ValueError:
+        print("⚠️ WARNING: ALERT_CHANNEL_ID tidak valid, fitur alert dinonaktifkan")
         ALERT_CHANNEL_ID = None
-else:
-    print("ℹ️ ALERT_CHANNEL_ID not set. Alert notifications disabled.")
 
-parsed_channel_ids = []
 if ALLOWED_CHANNEL_IDS:
     try:
-        parsed_channel_ids = [int(channel_id.strip()) for channel_id in ALLOWED_CHANNEL_IDS.split(',')]
-        print(f"✅ Bot is restricted to channel(s): {parsed_channel_ids}")
+        ALLOWED_CHANNEL_IDS = [int(cid.strip()) for cid in ALLOWED_CHANNEL_IDS.split(',')]
+        print(f"✅ Bot dibatasi pada {len(ALLOWED_CHANNEL_IDS)} channel(s)")
     except ValueError:
-        print("FATAL ERROR: ALLOWED_CHANNEL_IDS contains invalid values.")
+        print("❌ FATAL ERROR: ALLOWED_CHANNEL_IDS format tidak valid!")
         exit()
-else:
-    print("⚠️ WARNING: ALLOWED_CHANNEL_IDS is not set. Bot will respond in all channels.")
-ALLOWED_CHANNEL_IDS = parsed_channel_ids
 
-# --- Inisialisasi Klien AI ---
-try:
-    print("🤖 Initializing OpenAI client...")
-    openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-    print("✅ OpenAI client initialized successfully.")
-except Exception as e:
-    print(f"FATAL ERROR: Failed to initialize OpenAI client: {e}")
-    exit()
+# Inisialisasi key cyclers untuk load balancing
+openai_key_cycler = itertools.cycle(OPENAI_API_KEYS) if OPENAI_API_KEYS else None
+gemini_key_cycler = itertools.cycle(GEMINI_API_KEYS) if GEMINI_API_KEYS else None
 
-# --- Sistem Level Bahaya & Pola ---
+# ============================
+# SISTEM LEVEL BAHAYA
+# ============================
 class DangerLevel:
-    SAFE, SUSPICIOUS, VERY_SUSPICIOUS, DANGEROUS = 1, 2, 3, 4
+    SAFE = 1
+    SUSPICIOUS = 2
+    VERY_SUSPICIOUS = 3
+    DANGEROUS = 4
 
+# Pola-pola berbahaya dengan level dan deskripsi
 SUSPICIOUS_PATTERNS = {
-    "discord.com/api/webhooks": {"level": DangerLevel.DANGEROUS, "description": "Discord webhook - sangat mungkin untuk mencuri data pengguna"},
-    "pastebin.com": {"level": DangerLevel.DANGEROUS, "description": "Upload ke Pastebin - kemungkinan besar untuk mengirim data curian"},
-    "hastebin.com": {"level": DangerLevel.DANGEROUS, "description": "Upload ke Hastebin - kemungkinan besar untuk mengirim data curian"},
-    "loadstring": {"level": DangerLevel.VERY_SUSPICIOUS, "description": "Eksekusi kode dinamis - sangat berbahaya jika berisi kode tersembunyi"},
-    "LuaObfuscator.com": {"level": DangerLevel.VERY_SUSPICIOUS, "description": "Kode yang diobfuscate - menyembunyikan fungsi sebenarnya"},
-    "dofile": {"level": DangerLevel.VERY_SUSPICIOUS, "description": "Menjalankan file eksternal - berbahaya jika file tidak diketahui"},
-    "io.open": {"level": DangerLevel.SUSPICIOUS, "description": "Membuka/membuat file - bisa legitimate untuk konfigurasi"},
-    "os.execute": {"level": DangerLevel.SUSPICIOUS, "description": "Menjalankan perintah sistem - berbahaya jika tidak untuk fungsi legitimate"},
-    "socket.http": {"level": DangerLevel.SUSPICIOUS, "description": "Komunikasi HTTP - bisa legitimate untuk API atau update"},
-    "http.request": {"level": DangerLevel.SUSPICIOUS, "description": "Request HTTP - bisa legitimate untuk komunikasi API"},
-    "sampGetPlayerNickname": {"level": DangerLevel.SUSPICIOUS, "description": "Mengambil nickname pemain - bisa legitimate untuk fitur game"},
-    "sampGetCurrentServerAddress": {"level": DangerLevel.SUSPICIOUS, "description": "Mengambil alamat server - bisa legitimate untuk fitur reconnect"},
-    "io.popen": {"level": DangerLevel.SUSPICIOUS, "description": "Membuka proses eksternal - berbahaya jika tidak untuk fungsi legitimate"},
-    "os.remove": {"level": DangerLevel.SUSPICIOUS, "description": "Menghapus file - bisa legitimate untuk cleanup"},
-    "os.rename": {"level": DangerLevel.SUSPICIOUS, "description": "Mengubah nama file - bisa legitimate untuk manajemen file"}
+    # Level DANGEROUS - Sangat berbahaya
+    "discord.com/api/webhooks": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Discord webhook - sangat mungkin untuk mencuri data pengguna"
+    },
+    "pastebin.com": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Upload ke Pastebin - kemungkinan besar untuk mengirim data curian"
+    },
+    "hastebin.com": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Upload ke Hastebin - kemungkinan besar untuk mengirim data curian"
+    },
+    
+    # Level VERY_SUSPICIOUS - Sangat mencurigakan
+    "loadstring": {
+        "level": DangerLevel.VERY_SUSPICIOUS,
+        "description": "Eksekusi kode dinamis - sangat berbahaya jika berisi kode tersembunyi"
+    },
+    "LuaObfuscator.com": {
+        "level": DangerLevel.VERY_SUSPICIOUS,
+        "description": "Kode yang diobfuscate - menyembunyikan fungsi sebenarnya"
+    },
+    "dofile": {
+        "level": DangerLevel.VERY_SUSPICIOUS,
+        "description": "Menjalankan file eksternal - berbahaya jika file tidak diketahui"
+    },
+    
+    # Level SUSPICIOUS - Mencurigakan tapi bisa legitimate
+    "io.open": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Membuka/membuat file - bisa legitimate untuk konfigurasi"
+    },
+    "os.execute": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Menjalankan perintah sistem - berbahaya jika tidak untuk fungsi legitimate"
+    },
+    "socket.http": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Komunikasi HTTP - bisa legitimate untuk API atau update"
+    },
+    "http.request": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Request HTTP - bisa legitimate untuk komunikasi API"
+    },
+    "sampGetPlayerNickname": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Mengambil nickname pemain - bisa legitimate untuk fitur game"
+    },
+    "sampGetCurrentServerAddress": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Mengambil alamat server - bisa legitimate untuk fitur reconnect"
+    },
+    "io.popen": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Membuka proses eksternal - berbahaya jika tidak untuk fungsi legitimate"
+    },
+    "os.remove": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Menghapus file - bisa legitimate untuk cleanup"
+    },
+    "os.rename": {
+        "level": DangerLevel.SUSPICIOUS,
+        "description": "Mengubah nama file - bisa legitimate untuk manajemen file"
+    }
 }
 
-# --- Fungsi Analisis AI ---
-async def analyze_with_ai(code_snippet: str, detected_patterns: List[str], file_name: str) -> Dict:
+# ============================
+# FUNGSI ANALISIS AI
+# ============================
+AI_PROMPT = """
+Anda adalah seorang ahli keamanan siber Lua yang sangat tegas dan berpengalaman. Analisis skrip Lua berikut dengan teliti.
+
+ATURAN UTAMA ANDA:
+1. PRIORITAS #1: DETEKSI PENCURIAN DATA. Jika Anda melihat kombinasi fungsi pengumpul data (`sampGetPlayerNickname`, `sampGetCurrentServerAddress`) DENGAN fungsi pengiriman data (`discord.com/api/webhooks`, `pastebin.com`, dan segala pola pencurian data di internet maupun script), Anda HARUS mengklasifikasikannya sebagai DANGEROUS (Level 4).
+
+2. ANALISIS KONTEKS FUNGSI. Tentukan apakah pola mencurigakan relevan dengan tujuan utama skrip:
+   - Webhook pada mod sederhana = DANGEROUS (Level 4)
+   - `io.open` pada skrip konfigurasi = SAFE (Level 1) 
+   - `loadstring` dengan kode terenkripsi = VERY_SUSPICIOUS (Level 3)
+
+3. IDENTIFIKASI ALAT KEAMANAN. Jika skrip justru MEMBLOKIR atau MENDETEKSI pola berbahaya, itu adalah SAFE (Level 1).
+
+4. ANALISIS SEMUA FILE. Berikan analisis singkat tentang tujuan skrip, bahkan jika tidak ada pola mencurigakan.
+
+5. WALAUPUN ADA POLA, JIKA KODE UTAMA TIDAK BERHUBUNGAN DENGAN PENCURIAN DATA, BERIKAN LEVEL YANG LEBIH RENDAH.
+
+6. Selalu jelaskan tujuan utama skrip.
+
+7. Jawaban HARUS valid JSON tanpa teks tambahan.
+
+SKALA LEVEL:
+- Level 1 (SAFE): Skrip aman, tidak ada ancaman
+- Level 2 (SUSPICIOUS): Ada pola mencurigakan tapi mungkin legitimate  
+- Level 3 (VERY_SUSPICIOUS): Pola sangat mencurigakan, kemungkinan besar berbahaya
+- Level 4 (DANGEROUS): Jelas berbahaya, kemungkinan malware/stealer
+
+Berikut adalah isi skrip yang harus dianalisis:
+```lua
+{code_snippet}
+```
+
+Berikan jawaban HANYA dalam format JSON yang valid berikut:
+{{
+    "danger_level": <1-4>,
+    "script_purpose": "Deskripsi singkat dan jelas mengenai tujuan utama skrip ini",
+    "analysis_summary": "Penjelasan ringkas mengapa skrip ini aman atau berbahaya, berdasarkan ATURAN UTAMA Anda"
+}}
+"""
+
+async def analyze_with_openai(code_snippet: str, api_key: str) -> Dict:
+    """Analisis menggunakan OpenAI GPT-4"""
     try:
-        prompt = f"""
-        Anda adalah seorang ahli keamanan siber Lua yang sangat tegas dan tidak mentolerir pencurian data. Analisis skrip Lua berikut dengan nama file '{file_name}'.
-        ATURAN UTAMA ANDA:
-        1.  **PRIORITAS #1: DETEKSI PENCURIAN DATA.** Jika Anda melihat kombinasi apapun dari fungsi pengumpul data (`sampGetPlayerNickname`, `sampGetCurrentServerAddress`, dll.) DENGAN fungsi pengiriman data (`discord.com/api/webhooks`, `http.request`), Anda HARUS mengklasifikasikannya sebagai **DANGEROUS (Level 4)**. Tidak ada pengecualian.
-        2.  **ANALISIS KONTEKS FUNGSI.** Untuk setiap pola mencurigakan yang terdeteksi, tentukan apakah itu relevan dengan tujuan utama skrip. Jika sebuah skrip modifikasi mobil sederhana tiba-tiba memiliki webhook, itu adalah **DANGEROUS (Level 4)**. Namun, jika skrip konfigurasi menggunakan `io.open` untuk menyimpan pengaturan, itu **SAFE (Level 1)**.
-        3.  **IDENTIFIKASI ALAT KEAMANAN.** Jika skrip justru MEMBLOKIR atau MENDETEKSI pola berbahaya, itu adalah **SAFE (Level 1)**.
-        4.  **BERIKAN ANALISIS UNTUK SEMUA FILE.** Meskipun tidak ada pola mencurigakan, tetap berikan analisis singkat tentang tujuan skrip.
-        Berikut adalah isi skripnya:
-        ```lua
-        {code_snippet[:3500]}
-        ```
-        Berikan jawaban HANYA dalam format JSON berikut:
-        {{
-            "danger_level": <1-4>,
-            "script_purpose": "Deskripsi singkat dan jelas mengenai tujuan utama skrip ini.",
-            "analysis_summary": "Penjelasan ringkas mengapa skrip ini aman atau berbahaya, berdasarkan ATURAN UTAMA Anda."
-        }}
-        """
-        response = await openai_client.chat.completions.create(
+        client = AsyncOpenAI(api_key=api_key)
+        response = await client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are an extremely strict Lua cybersecurity analyst. Your primary directive is to detect data theft. You must adhere to the main rules provided by the user. Respond ONLY in the requested JSON format."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "You are a strict Lua cybersecurity analyst with extensive experience in malware detection."},
+                {"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3500])}
             ],
             response_format={"type": "json_object"},
-            temperature=0.0
+            temperature=0.0,
+            max_tokens=500
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
-        print(f"AI Analysis error: {e}")
-        return {"danger_level": 2, "script_purpose": "Tidak dapat dianalisis oleh AI.", "analysis_summary": f"Analisis AI gagal: {str(e)}"}
+        print(f"❌ OpenAI Analysis Error: {e}")
+        raise e
 
-# --- Fungsi Utilitas & Scanner ---
-def extract_archive(file_path: str, extract_to: str) -> bool:
+async def analyze_with_gemini(code_snippet: str, api_key: str) -> Dict:
+    """Analisis menggunakan Google Gemini"""
     try:
-        # --- BLOK INI TELAH DIPERBAIKI ---
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = await model.generate_content_async(
+            AI_PROMPT.format(code_snippet=code_snippet[:3500])
+        )
+        
+        # Bersihkan response dari markdown formatting
+        cleaned_response = response.text.strip()
+        cleaned_response = re.sub(r'```json\s*', '', cleaned_response)
+        cleaned_response = re.sub(r'```\s*$', '', cleaned_response)
+        cleaned_response = cleaned_response.strip()
+        
+        return json.loads(cleaned_response)
+    except Exception as e:
+        print(f"❌ Gemini Analysis Error: {e}")
+        raise e
+
+def analyze_manually(detected_issues: List[Dict]) -> Dict:
+    """Analisis manual berdasarkan pola yang terdeteksi"""
+    if not detected_issues:
+        return {
+            "danger_level": DangerLevel.SAFE,
+            "script_purpose": "Tidak ada pola mencurigakan terdeteksi",
+            "analysis_summary": "Analisis manual tidak menemukan pola berbahaya yang dikenal"
+        }
+    
+    max_level = max(issue['level'] for issue in detected_issues)
+    issue_count = len(detected_issues)
+    
+    # Logika untuk menentukan summary berdasarkan level tertinggi
+    if max_level == DangerLevel.DANGEROUS:
+        summary = f"Ditemukan {issue_count} pola berbahaya tingkat TINGGI. Kemungkinan besar malware!"
+    elif max_level == DangerLevel.VERY_SUSPICIOUS:
+        summary = f"Ditemukan {issue_count} pola sangat mencurigakan. Perlu investigasi lebih lanjut."
+    elif max_level == DangerLevel.SUSPICIOUS:
+        summary = f"Ditemukan {issue_count} pola mencurigakan. Mungkin legitimate tapi perlu hati-hati."
+    else:
+        summary = f"Analisis manual menemukan {issue_count} pola dengan tingkat bahaya rendah."
+    
+    return {
+        "danger_level": max_level,
+        "script_purpose": "Analisis manual berdasarkan pattern matching",
+        "analysis_summary": summary
+    }
+
+async def get_ai_analysis(code_snippet: str, detected_issues: List[Dict], choice: str) -> Tuple[Dict, str]:
+    """
+    Mendapatkan analisis AI dengan fallback system
+    choice: 'auto', 'openai', 'gemini', 'manual'
+    """
+    
+    # Jika dipilih manual atau tidak ada API key, langsung manual
+    if choice == 'manual' or (not openai_key_cycler and not gemini_key_cycler):
+        print("🔧 Menggunakan analisis manual...")
+        return analyze_manually(detected_issues), "Manual"
+    
+    # Jika choice adalah 'openai' atau 'auto', coba OpenAI dulu
+    if choice in ['auto', 'openai'] and openai_key_cycler:
+        print("🤖 Mencoba analisis dengan OpenAI...")
+        for attempt in range(len(OPENAI_API_KEYS)):
+            key = next(openai_key_cycler)
+            try:
+                print(f"   └─ Menggunakan OpenAI key: ...{key[-4:]}")
+                result = await analyze_with_openai(code_snippet, key)
+                return result, "OpenAI"
+            except RateLimitError:
+                print(f"   └─ ⚠️ OpenAI key ...{key[-4:]} mencapai batas kuota")
+                continue
+            except Exception as e:
+                print(f"   └─ ❌ OpenAI key ...{key[-4:]} gagal: {str(e)[:50]}...")
+                continue
+        
+        print("❌ Semua OpenAI key gagal atau mencapai limit")
+    
+    # Jika OpenAI gagal atau choice adalah 'gemini', coba Gemini
+    if choice in ['auto', 'gemini'] and gemini_key_cycler:
+        print("🧠 Mencoba analisis dengan Gemini...")
+        for attempt in range(len(GEMINI_API_KEYS)):
+            key = next(gemini_key_cycler)
+            try:
+                print(f"   └─ Menggunakan Gemini key: ...{key[-4:]}")
+                result = await analyze_with_gemini(code_snippet, key)
+                return result, "Gemini"
+            except Exception as e:
+                print(f"   └─ ❌ Gemini key ...{key[-4:]} gagal: {str(e)[:50]}...")
+                continue
+        
+        print("❌ Semua Gemini key gagal atau mencapai limit")
+    
+    # Fallback ke analisis manual
+    print("🔧 Fallback ke analisis manual...")
+    return analyze_manually(detected_issues), "Manual"
+
+# ============================
+# FUNGSI UTILITAS FILE
+# ============================
+def extract_archive(file_path: str, extract_to: str) -> bool:
+    """Ekstrak file arsip (zip, 7z, rar)"""
+    try:
         if file_path.endswith('.zip'):
-            with zipfile.ZipFile(file_path, 'r') as z:
-                z.extractall(extract_to)
+            with zipfile.ZipFile(file_path, 'r') as zip_file:
+                zip_file.extractall(extract_to)
         elif file_path.endswith('.7z'):
-            with py7zr.SevenZipFile(file_path, mode='r') as z:
-                z.extractall(extract_to)
+            with py7zr.SevenZipFile(file_path, mode='r') as seven_zip:
+                seven_zip.extractall(extract_to)
         elif file_path.endswith('.rar'):
-            with rarfile.RarFile(file_path) as z:
-                z.extractall(extract_to)
+            with rarfile.RarFile(file_path) as rar_file:
+                rar_file.extractall(extract_to)
         return True
     except Exception as e:
-        print(f"Error extracting {file_path}: {e}")
+        print(f"❌ Error mengekstrak {file_path}: {e}")
         return False
 
-async def scan_file_content(file_path: str) -> Tuple[List[Dict], Dict]:
+async def scan_file_content(file_path: str, choice: str) -> Tuple[List[Dict], Dict, str]:
+    """Scan konten file untuk pola berbahaya"""
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f: content = f.read()
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
+            content = file.read()
         
+        # Deteksi pola berbahaya
         detected_issues = []
         for pattern, info in SUSPICIOUS_PATTERNS.items():
-            for match in re.finditer(pattern, content, re.IGNORECASE):
+            matches = list(re.finditer(pattern, content, re.IGNORECASE))
+            for match in matches:
+                line_number = content[:match.start()].count('\n') + 1
                 detected_issues.append({
                     'pattern': pattern,
-                    'line': content[:match.start()].count('\n') + 1,
-                    'description': info['description']
+                    'line': line_number,
+                    'description': info['description'],
+                    'level': info['level']
                 })
-
-        detected_patterns_for_ai = list(dict.fromkeys(issue['pattern'] for issue in detected_issues))
-        file_name = os.path.basename(file_path)
-        ai_summary = await analyze_with_ai(content, detected_patterns_for_ai, file_name)
-        return detected_issues, ai_summary
+        
+        # Analisis dengan AI atau manual
+        ai_summary, analyst = await get_ai_analysis(content, detected_issues, choice)
+        
+        return detected_issues, ai_summary, analyst
+        
     except Exception as e:
-        print(f"Error scanning file {file_path}: {e}")
-        return [], {}
+        print(f"❌ Error scanning file {file_path}: {e}")
+        return [], {}, "Error"
 
-# --- Bot Discord ---
+# ============================
+# BOT DISCORD
+# ============================
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 def get_level_emoji_color(level: int) -> Tuple[str, int]:
-    if level == DangerLevel.SAFE: return "🟢", 0x00FF00
-    if level == DangerLevel.SUSPICIOUS: return "🟡", 0xFFFF00
-    if level == DangerLevel.VERY_SUSPICIOUS: return "🟠", 0xFF8C00
-    return "🔴", 0xFF0000
+    """Mendapatkan emoji dan warna berdasarkan level bahaya"""
+    if level == DangerLevel.SAFE:
+        return "🟢", 0x00FF00
+    elif level == DangerLevel.SUSPICIOUS:
+        return "🟡", 0xFFFF00
+    elif level == DangerLevel.VERY_SUSPICIOUS:
+        return "🟠", 0xFF8C00
+    else:  # DANGEROUS
+        return "🔴", 0xFF0000
 
-@client.event
-async def on_ready():
-    print(f'🤖 Bot scanner siap! Login sebagai {client.user}')
-    if not os.path.exists(TEMP_DIR): os.makedirs(TEMP_DIR)
-
-@client.event
-async def on_message(message):
-    if message.author == client.user: return
-    if ALLOWED_CHANNEL_IDS and message.channel.id not in ALLOWED_CHANNEL_IDS: return
-    if not message.attachments: return
-
-    attachment = message.attachments[0]
-    file_extension = os.path.splitext(attachment.filename)[1].lower()
-
-    if file_extension not in ALLOWED_EXTENSIONS:
-        await message.reply(f"❌ **Format File Tidak Didukung**: `{attachment.filename}`.")
+async def process_analysis(message_context, attachment, choice: str):
+    """Proses analisis file yang diunggah"""
+    
+    # Cek channel permission
+    if ALLOWED_CHANNEL_IDS and message_context.channel.id not in ALLOWED_CHANNEL_IDS:
         return
-
-    processing_message, download_path = None, os.path.join(TEMP_DIR, attachment.filename)
+    
+    # Cek ekstensi file
+    if not any(attachment.filename.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS):
+        await message_context.reply(
+            f"❌ **Format File Tidak Didukung**: `{attachment.filename}`\n"
+            f"**Format yang didukung**: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+        return
+    
+    processing_message = None
+    download_path = os.path.join(TEMP_DIR, attachment.filename)
+    
     try:
-        if file_extension in ['.zip', '.7z', '.rar']:
-            user_id = message.author.id
+        # Cooldown untuk file arsip
+        if attachment.filename.lower().endswith(('.zip', '.7z', '.rar')):
+            user_id = message_context.author.id
             current_time = time.time()
-            if user_id in zip_cooldowns and (current_time - zip_cooldowns[user_id]) < ZIP_COOLDOWN_SECONDS:
-                remaining_time = int(ZIP_COOLDOWN_SECONDS - (current_time - zip_cooldowns[user_id]))
-                await message.reply(f"⏳ **Cooldown Aktif**. Harap tunggu **{remaining_time} detik** lagi.")
-                return
+            
+            if user_id in zip_cooldowns:
+                time_left = ZIP_COOLDOWN_SECONDS - (current_time - zip_cooldowns[user_id])
+                if time_left > 0:
+                    await message_context.reply(
+                        f"⏳ **Cooldown Aktif**\n"
+                        f"Harap tunggu **{int(time_left)} detik** lagi sebelum menganalisis arsip."
+                    )
+                    return
+            
             zip_cooldowns[user_id] = current_time
-            processing_message = await message.reply(f"⚙️ **Menganalisis Arsip...** File `{attachment.filename}` sedang diproses.")
-
-        await attachment.save(download_path)
-        all_issues, scanned_files, all_ai_summaries = [], [], []
+            processing_message = await message_context.reply(
+                f"⚙️ **Menganalisis Arsip...**\n"
+                f"Mengekstrak dan memindai: `{attachment.filename}`"
+            )
         
+        # Download file
+        await attachment.save(download_path)
+        
+        # Inisialisasi variabel hasil
+        all_issues = []
+        scanned_files = []
+        all_ai_summaries = []
+        analysts = set()
+        
+        # Tentukan file yang akan discan
         scan_paths = []
         extract_folder = os.path.join(TEMP_DIR, "extracted")
-        if file_extension in ['.zip', '.7z', '.rar']:
+        
+        if attachment.filename.lower().endswith(('.zip', '.7z', '.rar')):
+            # Ekstrak arsip
             if extract_archive(download_path, extract_folder):
-                for root, _, files in os.walk(extract_folder):
+                for root, dirs, files in os.walk(extract_folder):
                     for file in files:
                         if file.endswith(('.lua', '.txt')):
-                            scan_paths.append((os.path.join(root, file), os.path.relpath(os.path.join(root, file), extract_folder)))
-            else: raise Exception(f"Gagal mengekstrak `{attachment.filename}`.")
+                            file_path = os.path.join(root, file)
+                            relative_path = os.path.relpath(file_path, extract_folder)
+                            scan_paths.append((file_path, relative_path))
+            else:
+                raise Exception("Gagal mengekstrak arsip")
         else:
+            # File tunggal
             scan_paths.append((download_path, attachment.filename))
-
-        for file_path, display_name in scan_paths:
-            issues, ai_summary = await scan_file_content(file_path)
-            scanned_files.append(display_name)
-            if issues: all_issues.extend([(display_name, issue) for issue in issues])
-            if ai_summary: all_ai_summaries.append(ai_summary)
         
-        if os.path.exists(extract_folder): shutil.rmtree(extract_folder)
-
+        # Scan semua file
+        for file_path, display_name in scan_paths:
+            issues, ai_summary, analyst = await scan_file_content(file_path, choice)
+            
+            scanned_files.append(display_name)
+            analysts.add(analyst)
+            
+            if issues:
+                all_issues.extend([(display_name, issue) for issue in issues])
+            
+            if ai_summary:
+                all_ai_summaries.append(ai_summary)
+        
+        # Cleanup extracted files
+        if os.path.exists(extract_folder):
+            shutil.rmtree(extract_folder)
+        
+        # Tentukan level bahaya tertinggi
         best_summary = max(all_ai_summaries, key=lambda x: x.get('danger_level', 0), default={})
         max_level = best_summary.get('danger_level', DangerLevel.SAFE)
+        
+        # Buat embed response
         emoji, color = get_level_emoji_color(max_level)
         embed = discord.Embed(color=color)
         
+        # Title berdasarkan level
         level_titles = {
-            DangerLevel.SAFE: "✅ AMAN", DangerLevel.SUSPICIOUS: "🤔 MENCURIGAKAN",
-            DangerLevel.VERY_SUSPICIOUS: "⚠️ SANGAT MENCURIGAKAN", DangerLevel.DANGEROUS: "🚨 BAHAYA TINGGI"
+            DangerLevel.SAFE: "✅ AMAN",
+            DangerLevel.SUSPICIOUS: "🤔 MENCURIGAKAN", 
+            DangerLevel.VERY_SUSPICIOUS: "⚠️ SANGAT MENCURIGAKAN",
+            DangerLevel.DANGEROUS: "🚨 BAHAYA TINGGI"
         }
+        
         embed.title = f"{emoji} **{level_titles.get(max_level, 'HASIL SCAN')}**"
-        embed.description = (f"**Tujuan Script:** {best_summary.get('script_purpose', 'N/A')}\n"
-                           f"**Ringkasan AI:** {best_summary.get('analysis_summary', 'N/A')}")
-
+        embed.description = (
+            f"**Tujuan Script:** {best_summary.get('script_purpose', 'N/A')}\n"
+            f"**Ringkasan AI:** {best_summary.get('analysis_summary', 'N/A')}"
+        )
+        
+        # Detail pola yang terdeteksi
         if all_issues:
             field_value = ""
-            for filepath, issue in all_issues[:4]:
-                field_value += f"📁 `{filepath}` (Line {issue['line']})\n"
-                field_value += f"🔍 **Pattern:** `{issue['pattern']}`\n"
-                field_value += f"💡 **Alasan:** {issue['description']}\n\n"
-
+            for filepath, issue in all_issues[:4]:  # Tampilkan max 4 issues
+                field_value += (
+                    f"📁 `{filepath}` (Line {issue['line']})\n"
+                    f"💡 **Alasan:** {issue['description']}\n\n"
+                )
+            
             if len(all_issues) > 4:
-                field_value += f"... dan {len(all_issues) - 4} lainnya."
-            embed.add_field(name="📝 Detail Pola Terdeteksi", value=field_value.strip(), inline=False)
+                field_value += f"... dan {len(all_issues) - 4} pola lainnya."
+            
+            embed.add_field(
+                name="📝 Detail Pola Terdeteksi", 
+                value=field_value.strip(), 
+                inline=False
+            )
         
-        embed.set_footer(text=f"Dipindai oleh Lua Security Bot • {len(scanned_files)} file dianalisis")
+        # Footer dengan info analyst
+        analyst_text = ", ".join(sorted(list(analysts)))
+        embed.set_footer(
+            text=f"Dianalisis oleh: {analyst_text} • {len(scanned_files)} file diperiksa"
+        )
         
-        if processing_message: await processing_message.edit(content=None, embed=embed)
-        else: await message.reply(embed=embed)
+        # Send/edit response
+        if processing_message:
+            await processing_message.edit(content=None, embed=embed)
+        else:
+            await message_context.reply(embed=embed)
         
+        # Send alert jika berbahaya
         if max_level >= DangerLevel.DANGEROUS and ALERT_CHANNEL_ID:
-            try:
-                alert_channel = client.get_channel(ALERT_CHANNEL_ID)
-                if alert_channel: await alert_channel.send(f"🚨 **Peringatan Keamanan** oleh {message.author.mention} di {message.channel.mention}", embed=embed)
-            except Exception as e: print(f"Gagal mengirim alert: {e}")
-
+            alert_channel = bot.get_channel(ALERT_CHANNEL_ID)
+            if alert_channel:
+                await alert_channel.send(
+                    f"🚨 **PERINGATAN KEAMANAN**\n"
+                    f"Ditemukan file berbahaya oleh {message_context.author.mention} "
+                    f"di {message_context.channel.mention}",
+                    embed=embed
+                )
+    
     except Exception as e:
-        error_message = f"❌ Terjadi error saat memindai file: {str(e)}"
-        if processing_message: await processing_message.edit(content=error_message, embed=None)
-        else: await message.reply(error_message)
+        error_msg = f"❌ **Error saat menganalisis file**: {str(e)}"
+        if processing_message:
+            await processing_message.edit(content=error_msg)
+        else:
+            await message_context.reply(error_msg)
+        print(f"❌ Process Analysis Error: {e}")
+    
     finally:
-        if os.path.exists(download_path): os.remove(download_path)
+        # Cleanup
+        if os.path.exists(download_path):
+            os.remove(download_path)
 
-# --- Jalankan Bot ---
+# ============================
+# EVENTS & COMMANDS
+# ============================
+@bot.event
+async def on_ready():
+    print(f'🤖 Bot scanner siap! Login sebagai {bot.user}')
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
+    
+    # Show available analysts
+    available_analysts = []
+    if OPENAI_API_KEYS:
+        available_analysts.append(f"OpenAI ({len(OPENAI_API_KEYS)} keys)")
+    if GEMINI_API_KEYS:
+        available_analysts.append(f"Gemini ({len(GEMINI_API_KEYS)} keys)")
+    available_analysts.append("Manual")
+    
+    print(f"📊 Available analysts: {', '.join(available_analysts)}")
+
+@bot.command(name='scan', help='Memindai file dengan analis pilihan')
+async def scan_command(ctx, analyst: str = 'auto'):
+    """
+    Memindai file dengan analis pilihan
+    Usage: !scan [auto|openai|gemini|manual]
+    Default: auto
+    """
+    analyst = analyst.lower()
+    valid_analysts = ['auto', 'openai', 'gemini', 'manual']
+    
+    if analyst not in valid_analysts:
+        await ctx.reply(
+            f"❌ **Pilihan analis tidak valid!**\n"
+            f"**Pilihan yang tersedia**: {', '.join(valid_analysts)}\n"
+            f"**Contoh**: `!scan auto` atau `!scan openai`"
+        )
+        return
+    
+    if not ctx.message.attachments:
+        await ctx.reply(
+            f"❌ **Tidak ada file yang diunggah!**\n"
+            f"Silakan unggah file bersamaan dengan perintah `!scan {analyst}`"
+        )
+        return
+    
+    await process_analysis(ctx, ctx.message.attachments[0], choice=analyst)
+
+@bot.command(name='help', help='Menampilkan bantuan')
+async def help_command(ctx):
+    """Menampilkan bantuan penggunaan bot"""
+    embed = discord.Embed(
+        title="🛡️ Lua Security Scanner Bot - Bantuan",
+        color=0x3498db
+    )
+    
+    embed.add_field(
+        name="🔍 Cara Scan Otomatis",
+        value="Upload file langsung ke chat (tanpa command)",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚙️ Scan dengan Pilihan Analyst",
+        value=(
+            "`!scan auto` - OpenAI → Gemini → Manual\n"
+            "`!scan openai` - Hanya OpenAI\n"
+            "`!scan gemini` - Hanya Gemini\n"
+            "`!scan manual` - Analisis pattern manual"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📂 Format File Didukung",
+        value=f"`{', '.join(ALLOWED_EXTENSIONS)}`",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🚨 Level Bahaya",
+        value=(
+            "🟢 **AMAN** - Tidak ada ancaman\n"
+            "🟡 **MENCURIGAKAN** - Perlu perhatian\n"
+            "🟠 **SANGAT MENCURIGAKAN** - Kemungkinan berbahaya\n"
+            "🔴 **BAHAYA TINGGI** - Kemungkinan malware"
+        ),
+        inline=False
+    )
+    
+    # Show available analysts
+    analysts_info = []
+    if OPENAI_API_KEYS:
+        analysts_info.append(f"OpenAI ({len(OPENAI_API_KEYS)} keys)")
+    if GEMINI_API_KEYS:
+        analysts_info.append(f"Gemini ({len(GEMINI_API_KEYS)} keys)")
+    analysts_info.append("Manual Pattern Matching")
+    
+    embed.add_field(
+        name="🤖 Available Analysts",
+        value="\n".join(f"• {analyst}" for analyst in analysts_info),
+        inline=False
+    )
+    
+    embed.set_footer(text="Bot akan otomatis fallback ke analyst lain jika terjadi error")
+    
+    await ctx.reply(embed=embed)
+
+@bot.event
+async def on_message(message):
+    # Jangan proses message dari bot sendiri atau command
+    if message.author == bot.user or message.content.startswith('!'):
+        await bot.process_commands(message)  # Tetap proses commands
+        return
+    
+    # Auto-scan jika ada attachment
+    if message.attachments:
+        await process_analysis(message, message.attachments[0], choice='auto')
+
+# ============================
+# JALANKAN BOT
+# ============================
 if __name__ == "__main__":
     print("🚀 Memulai Lua Security Scanner Bot...")
-    client.run(BOT_TOKEN)
+    print("="*50)
+    try:
+        bot.run(BOT_TOKEN)
+    except Exception as e:
+        print(f"❌ Fatal error: {e}")
+        exit()
