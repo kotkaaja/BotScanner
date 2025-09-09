@@ -92,6 +92,39 @@ SUSPICIOUS_PATTERNS = {
         "level": DangerLevel.DANGEROUS,
         "description": "Upload ke Hastebin - kemungkinan besar untuk mengirim data curian"
     },
+    "api.telegram.org/bot": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Telegram bot API - sangat mungkin untuk mencuri data pengguna"
+    },
+    "username": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Kata 'username' - indikasi pengumpulan data kredensial"
+    },
+    "password": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Kata 'password' - indikasi pengumpulan data kredensial"
+    },
+    "api.telegram.org/": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Telegram API - sangat mungkin untuk mencuri data pengguna"
+    },
+    "discordapp.com/api/webhooks": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Discord webhook (legacy) - sangat mungkin untuk mencuri data pengguna"
+    },
+    "discordapp.com/api/": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Discord API (legacy) - sangat mungkin untuk mencuri data pengguna"
+    },
+    "telegram.org/bot": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Telegram bot API (legacy) - sangat mungkin untuk mencuri data pengguna"
+    },
+    "api.telegram.org": {
+        "level": DangerLevel.DANGEROUS,
+        "description": "Telegram API (legacy) - sangat mungkin untuk mencuri data pengguna"
+    },
+    
     
     # Level VERY_SUSPICIOUS - Sangat mencurigakan
     "loadstring": {
@@ -152,23 +185,40 @@ SUSPICIOUS_PATTERNS = {
 AI_PROMPT = """
 Anda adalah seorang ahli keamanan siber Lua yang sangat tegas dan berpengalaman. Analisis skrip Lua berikut dengan teliti.
 
-ATURAN UTAMA ANDA:
-1. PRIORITAS #1: DETEKSI PENCURIAN DATA. Jika Anda melihat kombinasi fungsi pengumpul data (`sampGetPlayerNickname`, `sampGetCurrentServerAddress`) DENGAN fungsi pengiriman data (`discord.com/api/webhooks`, `pastebin.com`, `http.request`), Anda HARUS mengklasifikasikannya sebagai DANGEROUS (Level 4).
+ATURAN MUTLAK YANG TIDAK BISA DILANGGAR:
 
-2. ANALISIS KONTEKS FUNGSI. Tentukan apakah pola mencurigakan relevan dengan tujuan utama skrip:
-   - Webhook pada mod sederhana = DANGEROUS (Level 4)
-   - `io.open` pada skrip konfigurasi = SAFE (Level 1)
-   - `loadstring` dengan kode terenkripsi = VERY_SUSPICIOUS (Level 3)
+🚨 LEVEL 4 (DANGEROUS) - MUTLAK BERBAHAYA - TIDAK ADA PENGECUALIAN:
+Jika ditemukan pola berikut, WAJIB dikategorikan Level 4 tanpa memedulikan konteks atau penjelasan apapun:
+- discord.com/api/webhooks, discordapp.com/api/webhooks
+- discord.com/api/, discordapp.com/api/
+- api.telegram.org/bot, telegram.org/bot, api.telegram.org/
+- pastebin.com, hastebin.com
+- kata "username", "password"  
+- sampGetPlayerNickname, sampGetCurrentServerAddress
 
-3. IDENTIFIKASI ALAT KEAMANAN. Jika skrip justru MEMBLOKIR atau MENDETEKSI pola berbahaya, itu adalah SAFE (Level 1).
+BAHKAN JIKA:
+- Ada komentar "untuk keamanan"
+- Ada penjelasan "untuk blocking"
+- Ada kata-kata "prevent", "block", "secure"
+- Terlihat seperti script proteksi
 
-4. ANALISIS SEMUA FILE. Berikan analisis singkat tentang tujuan skrip, bahkan jika tidak ada pola mencurigakan.
+TETAP HARUS LEVEL 4! Tidak ada pengecualian!
+
+ATURAN LAINNYA:
+1. DETEKSI KOMBINASI BERBAHAYA: Jika ada fungsi pengumpul data + pengiriman data = Level 4
+
+2. ANALISIS KONTEKS untuk Level 1-3:
+   - Level 3: loadstring, dofile, LuaObfuscator.com, os.execute
+   - Level 2: io.open, socket.http, http.request, io.popen, os.remove, os.rename
+   - Level 1: Hanya jika tidak ada pola mencurigakan sama sekali
+
+3. BERIKAN PENJELASAN: Tetap berikan analisis mengapa dangerous, tapi tetap Level 4
 
 SKALA LEVEL:
-- Level 1 (SAFE): Skrip aman, tidak ada ancaman
-- Level 2 (SUSPICIOUS): Ada pola mencurigakan tapi mungkin legitimate  
-- Level 3 (VERY_SUSPICIOUS): Pola sangat mencurigakan, kemungkinan besar berbahaya
-- Level 4 (DANGEROUS): Jelas berbahaya, kemungkinan malware/stealer
+- Level 1 (SAFE): Tidak ada pola berbahaya
+- Level 2 (SUSPICIOUS): Pola mencurigakan tapi mungkin legitimate  
+- Level 3 (VERY_SUSPICIOUS): Kemungkinan besar berbahaya
+- Level 4 (DANGEROUS): MUTLAK BERBAHAYA - TIDAK BISA DIVALIDASI
 
 Berikut adalah isi skrip yang harus dianalisis:
 ```lua
@@ -179,7 +229,7 @@ Berikan jawaban HANYA dalam format JSON yang valid berikut:
 {{
     "danger_level": <1-4>,
     "script_purpose": "Deskripsi singkat dan jelas mengenai tujuan utama skrip ini",
-    "analysis_summary": "Penjelasan ringkas mengapa skrip ini aman atau berbahaya, berdasarkan ATURAN UTAMA Anda"
+    "analysis_summary": "Penjelasan ringkas mengapa skrip ini aman atau berbahaya. JIKA LEVEL 4: Jelaskan pola berbahaya yang ditemukan meski ada penjelasan keamanan"
 }}
 """
 
@@ -615,21 +665,21 @@ async def help_command(ctx):
         inline=False
     )
     
-    # Show available analysts
+    # Show available analysts with new priority
     analysts_info = []
-    if OPENAI_API_KEYS:
-        analysts_info.append(f"OpenAI ({len(OPENAI_API_KEYS)} keys)")
     if GEMINI_API_KEYS:
-        analysts_info.append(f"Gemini ({len(GEMINI_API_KEYS)} keys)")
-    analysts_info.append("Manual Pattern Matching")
+        analysts_info.append(f"🧠 Gemini ({len(GEMINI_API_KEYS)} keys) - Priority 1")
+    if OPENAI_API_KEYS:
+        analysts_info.append(f"🤖 OpenAI ({len(OPENAI_API_KEYS)} keys) - Priority 2")
+    analysts_info.append("🔧 Manual Pattern Matching - Fallback")
     
     embed.add_field(
-        name="🤖 Available Analysts",
+        name="🤖 Available Analysts (New Priority Order)",
         value="\n".join(f"• {analyst}" for analyst in analysts_info),
         inline=False
     )
     
-    embed.set_footer(text="Bot akan otomatis fallback ke analyst lain jika terjadi error")
+    embed.set_footer(text="Created by Kotkaaja • Bot akan otomatis fallback ke analyst lain jika terjadi error")
     
     await ctx.reply(embed=embed)
 
