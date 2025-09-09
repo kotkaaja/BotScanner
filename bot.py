@@ -9,7 +9,8 @@ import aiohttp
 from typing import List, Tuple, Dict
 import py7zr
 import rarfile
-from openai import OpenAI
+import httpx
+from openai import AsyncOpenAI
 
 # --- Konfigurasi ---
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
@@ -49,12 +50,14 @@ else:
 # Initialize OpenAI client
 print("🤖 Initializing OpenAI client...")
 try:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    # Secara eksplisit buat http client untuk menghindari masalah proxy
+    http_client = httpx.AsyncClient(proxies=None)
+    # Gunakan AsyncOpenAI karena bot Anda bersifat asynchronous
+    openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
     print("✅ OpenAI client initialized successfully.")
 except Exception as e:
     print(f"FATAL ERROR: Failed to initialize OpenAI client: {e}")
     exit()
-
 # Sistem Level Bahaya
 class DangerLevel:
     SAFE = 1           # Hijau - Aman
@@ -198,7 +201,7 @@ async def analyze_with_ai(code_snippet: str, detected_patterns: List[str]) -> Tu
         4 = Dangerous (clear signs of data theft or malicious activity)
         """
         
-        response = openai_client.chat.completions.create(
+        response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",  # Using gpt-4o-mini as it's more cost-effective
             messages=[
                 {"role": "system", "content": "You are a cybersecurity expert analyzing Lua scripts for malicious behavior. Focus on identifying data theft, malware, and obfuscated code."},
