@@ -202,7 +202,7 @@ BAHKAN JIKA:
 
 TETAP HARUS LEVEL 4! Tidak ada pengecualian!
 
-BUATKAN JADI LEVEL 1! UNTUK POLA BERIKUT:
+YANG DI BAWAH INI MUTLAK MASUK KATEGORI LEVEL 1! APAPUN URUSANNYA MAUPUN ITU CHEAT ATAU YANG LAINNYA, UNTUK POLA BERIKUT:
 -io.popen untuk membaca/menyimpan file lokal seperti tokens.txt untuk menyimpan token autentikasi
 -os.remove untuk menghapus file lokal seperti tokens.txt setelah dibaca ataupun file profile dan penympanan json untuk kotkahelper
 -io.open untuk membuka file konfigurasi lokal
@@ -537,14 +537,14 @@ async def process_analysis(message_context, attachment, choice: str):
         # Detail pola yang terdeteksi
         if all_issues:
             field_value = ""
-            for filepath, issue in all_issues[:4]:  # Tampilkan max 4 issues
+            for filepath, issue in all_issues[:10]:  # Tampilkan max 4 issues
                 field_value += (
                     f"📁 `{filepath}` (Line {issue['line']})\n"
                     f"💡 **Alasan:** {issue['description']}\n\n"
                 )
             
-            if len(all_issues) > 4:
-                field_value += f"... dan {len(all_issues) - 4} pola lainnya."
+            if len(all_issues) > 10:
+                field_value += f"... dan {len(all_issues) - 10} pola lainnya."
             
             embed.add_field(
                 name="📝 Detail Pola Terdeteksi", 
@@ -556,9 +556,10 @@ async def process_analysis(message_context, attachment, choice: str):
         analyst_text = ", ".join(sorted(list(analysts)))
         embed.set_footer(
             text= f"Dianalisis oleh: {analyst_text} • {len(scanned_files)} file diperiksa\n"
-            "NOTE: JIKA DIANLISIS OLEH AI, BACA DESKRIPSI DENGAN TELITI!\n"
+            "NOTE: Jika di analisis oleh AI gemini maupun OpenAI, Baca Deskripsinya dengan teliti karena!\n"
             "Script cheat/ilegal biasa dikategorikan DANGEROUS/BERBAHAYA oleh AI. padahal aman\n"
-            "Gunakan !scan manual atau !help jika Anda ragu"
+            "Gunakan !scan manual atau !help jika Anda ragu.\n"
+            "Created by Kotkaaja"
             )
         # Send/edit response
         if processing_message:
