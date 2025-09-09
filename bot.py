@@ -534,17 +534,14 @@ async def process_analysis(message_context, attachment, choice: str):
             f"**Ringkasan AI:** {best_summary.get('analysis_summary', 'N/A')}"
         )
         
-        # Detail pola yang terdeteksi
+    # Detail pola yang terdeteksi
         if all_issues:
             field_value = ""
-            for filepath, issue in all_issues[:10]:  # Tampilkan max 4 issues
-                field_value += (
-                    f"📁 `{filepath}` (Line {issue['line']})\n"
-                    f"💡 **Alasan:** {issue['description']}\n\n"
-                )
+            for filepath, issue in all_issues[:10]:  # Tampilkan max 10 issues
+                field_value += f"📁 `{filepath}`  `{issue['pattern']}` di (Line {issue['line']})\n"
             
             if len(all_issues) > 10:
-                field_value += f"... dan {len(all_issues) - 10} pola lainnya."
+                field_value += f"\n... dan {len(all_issues) - 10} pola lainnya."
             
             embed.add_field(
                 name="📝 Detail Pola Terdeteksi", 
