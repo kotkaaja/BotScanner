@@ -141,10 +141,6 @@ SUSPICIOUS_PATTERNS = {
     },
     
     # Level SUSPICIOUS - Mencurigakan tapi bisa legitimate
-    "io.open": {
-        "level": DangerLevel.SUSPICIOUS,
-        "description": "Membuka/membuat file - bisa legitimate untuk konfigurasi"
-    },
     "os.execute": {
         "level": DangerLevel.SUSPICIOUS,
         "description": "Menjalankan perintah sistem - berbahaya jika tidak untuk fungsi legitimate"
@@ -164,18 +160,6 @@ SUSPICIOUS_PATTERNS = {
     "sampGetCurrentServerAddress": {
         "level": DangerLevel.SUSPICIOUS,
         "description": "Mengambil alamat server - bisa legitimate untuk fitur reconnect"
-    },
-    "io.popen": {
-        "level": DangerLevel.SUSPICIOUS,
-        "description": "Membuka proses eksternal - berbahaya jika tidak untuk fungsi legitimate"
-    },
-    "os.remove": {
-        "level": DangerLevel.SUSPICIOUS,
-        "description": "Menghapus file - bisa legitimate untuk cleanup"
-    },
-    "os.rename": {
-        "level": DangerLevel.SUSPICIOUS,
-        "description": "Mengubah nama file - bisa legitimate untuk manajemen file"
     }
 }
 
