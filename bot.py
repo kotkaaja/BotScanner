@@ -124,7 +124,7 @@ SUSPICIOUS_PATTERNS = {
         "level": DangerLevel.DANGEROUS,
         "description": "Telegram API (legacy) - sangat mungkin untuk mencuri data pengguna"
     },
-    
+
     
     # Level VERY_SUSPICIOUS - Sangat mencurigakan
     "loadstring": {
@@ -193,8 +193,6 @@ Jika ditemukan pola berikut, WAJIB dikategorikan Level 4 tanpa memedulikan konte
 - discord.com/api/, discordapp.com/api/
 - api.telegram.org/bot, telegram.org/bot, api.telegram.org/
 - pastebin.com, hastebin.com
-- kata "username", "password"  
-- sampGetPlayerNickname, sampGetCurrentServerAddress
 
 BAHKAN JIKA:
 - Ada komentar "untuk keamanan"
@@ -204,13 +202,19 @@ BAHKAN JIKA:
 
 TETAP HARUS LEVEL 4! Tidak ada pengecualian!
 
+BUATKAN JADI LEVEL 1! UNTUK POLA BERIKUT:
+-io.popen untuk membaca/menyimpan file lokal seperti tokens.txt untuk menyimpan token autentikasi
+-os.remove untuk menghapus file lokal seperti tokens.txt setelah dibaca ataupun file profile dan penympanan json untuk kotkahelper
+-io.open untuk membuka file konfigurasi lokal
+-socket.http, http.request untuk komunikasi API legitimate (misalnya update checker/tokens dll, fetch config)
+
 ATURAN LAINNYA:
 1. DETEKSI KOMBINASI BERBAHAYA: Jika ada fungsi pengumpul data + pengiriman data = Level 4
 
 2. ANALISIS KONTEKS untuk Level 1-3:
    - Level 3: loadstring, dofile, LuaObfuscator.com, os.execute
    - Level 2: io.open, socket.http, http.request, io.popen, os.remove, os.rename
-   - Level 1: Hanya jika tidak ada pola mencurigakan sama sekali
+   - Level 1: Hanya jika tidak ada pola mencurigakan sama sekali atau ketentuan di atas
 
 3. BERIKAN PENJELASAN: Tetap berikan analisis mengapa dangerous, tapi tetap Level 4
 
