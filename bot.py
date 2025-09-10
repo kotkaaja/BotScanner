@@ -688,6 +688,30 @@ async def on_message(message):
     # Auto-scan jika ada attachment
     if message.attachments:
         await process_analysis(message, message.attachments[0], choice='auto')
+# Tambahkan perintah ini di bagian EVENTS & COMMANDS di file bot.py Anda
+
+@bot.command(name='serverlist', help='Menampilkan daftar server tempat bot berada')
+@commands.is_owner() # <-- Baris ini penting! Membuat perintah hanya bisa dijalankan oleh Anda (pemilik bot)
+async def server_list_command(ctx):
+    """Menampilkan daftar server di mana bot aktif."""
+    server_list = []
+    for guild in bot.guilds:
+        server_list.append(f"- **{guild.name}** (ID: `{guild.id}`)")
+
+    if not server_list:
+        await ctx.send("Bot saat ini tidak berada di server mana pun.")
+        return
+
+    embed = discord.Embed(
+        title=f"Bot Aktif di {len(bot.guilds)} Server",
+        description="\n".join(server_list),
+        color=0x3498db
+    )
+    await ctx.author.send(embed=embed) # Mengirim daftar ke DM Anda agar tidak spam di chat publik
+    await ctx.message.add_reaction('✅') # Memberi tanda bahwa perintah berhasil dijalankan
+
+# Tambahan: Pastikan Anda sudah mengimpor commands di bagian atas
+# from discord.ext import commands
 
 # ============================
 # JALANKAN BOT
