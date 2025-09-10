@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord import app_commands
 import os
 import zipfile
 import shutil
@@ -295,52 +295,59 @@ def analyze_manually(detected_issues: List[Dict]) -> Dict:
         "analysis_summary": summary
     }
 
-async def get_ai_analysis(code_snippet: str, detected_issues: List[Dict], choice: str) -> Tuple[Dict, str]:
+async def get_ai_analysis(code_snippet: str, detected_issues: List[Dict], choice: str, interaction: discord.Interaction) -> Tuple[Dict, str]:
     """
-    Mendapatkan analisis AI dengan fallback system
+    Mendapatkan analisis AI dengan fallback system.
+    Memberi notifikasi pada user jika key gagal.
     choice: 'auto', 'openai', 'gemini', 'manual'
     """
     
-    # Jika dipilih manual atau tidak ada API key, langsung manual
-    if choice == 'manual' or (not openai_key_cycler and not gemini_key_cycler):
+    # Jika dipilih manual, langsung manual
+    if choice == 'manual':
         print("🔧 Menggunakan analisis manual...")
         return analyze_manually(detected_issues), "Manual"
+
+    # Prioritas Baru: Gemini -> OpenAI -> Manual (untuk mode 'auto')
     
-    # Jika choice adalah 'openai' atau 'auto', coba OpenAI dulu
-    if choice in ['auto', 'openai'] and openai_key_cycler:
-        print("🤖 Mencoba analisis dengan OpenAI...")
-        for attempt in range(len(OPENAI_API_KEYS)):
-            key = next(openai_key_cycler)
-            try:
-                print(f"   └─ Menggunakan OpenAI key: ...{key[-4:]}")
-                result = await analyze_with_openai(code_snippet, key)
-                return result, "OpenAI"
-            except RateLimitError:
-                print(f"   └─ ⚠️ OpenAI key ...{key[-4:]} mencapai batas kuota")
-                continue
-            except Exception as e:
-                print(f"   └─ ❌ OpenAI key ...{key[-4:]} gagal: {str(e)[:50]}...")
-                continue
-        
-        print("❌ Semua OpenAI key gagal atau mencapai limit")
-    
-    # Jika OpenAI gagal atau choice adalah 'gemini', coba Gemini
+    # Coba Gemini dulu jika 'auto' atau 'gemini'
     if choice in ['auto', 'gemini'] and gemini_key_cycler:
         print("🧠 Mencoba analisis dengan Gemini...")
-        for attempt in range(len(GEMINI_API_KEYS)):
-            key = next(gemini_key_cycler)
+        for i, key in enumerate(GEMINI_API_KEYS):
             try:
-                print(f"   └─ Menggunakan Gemini key: ...{key[-4:]}")
+                print(f"   └─ Menggunakan Gemini key #{i+1}: ...{key[-4:]}")
                 result = await analyze_with_gemini(code_snippet, key)
                 return result, "Gemini"
             except Exception as e:
-                print(f"   └─ ❌ Gemini key ...{key[-4:]} gagal: {str(e)[:50]}...")
+                error_msg = f"   └─ ⚠️ Gemini key #{i+1} gagal atau limit. Mencoba key berikutnya..."
+                print(error_msg)
+                # Gunakan followup.send karena response awal sudah di-defer
+                await interaction.followup.send(error_msg, ephemeral=True)
                 continue
-        
         print("❌ Semua Gemini key gagal atau mencapai limit")
-    
-    # Fallback ke analisis manual
+
+    # Fallback ke OpenAI jika Gemini gagal atau choice 'openai'
+    if choice in ['auto', 'openai'] and openai_key_cycler:
+        print("🤖 Mencoba analisis dengan OpenAI...")
+        for i, key in enumerate(OPENAI_API_KEYS):
+            try:
+                print(f"   └─ Menggunakan OpenAI key #{i+1}: ...{key[-4:]}")
+                result = await analyze_with_openai(code_snippet, key)
+                return result, "OpenAI"
+            except RateLimitError:
+                error_msg = f"   └─ ⚠️ OpenAI key #{i+1} mencapai batas kuota. Mencoba key berikutnya..."
+                print(error_msg)
+                await interaction.followup.send(error_msg, ephemeral=True)
+                continue
+            except Exception as e:
+                error_msg = f"   └─ ❌ OpenAI key #{i+1} gagal: {str(e)[:50]}... Mencoba key berikutnya..."
+                print(error_msg)
+                await interaction.followup.send(error_msg, ephemeral=True)
+                continue
+        print("❌ Semua OpenAI key gagal atau mencapai limit")
+
+    # Fallback terakhir ke analisis manual
     print("🔧 Fallback ke analisis manual...")
+    await interaction.followup.send("⚠️ Gagal menghubungi semua layanan AI, menggunakan analisis manual.", ephemeral=True)
     return analyze_manually(detected_issues), "Manual"
 
 # ============================
@@ -363,7 +370,7 @@ def extract_archive(file_path: str, extract_to: str) -> bool:
         print(f"❌ Error mengekstrak {file_path}: {e}")
         return False
 
-async def scan_file_content(file_path: str, choice: str) -> Tuple[List[Dict], Dict, str]:
+async def scan_file_content(file_path: str, choice: str, interaction: discord.Interaction) -> Tuple[List[Dict], Dict, str]:
     """Scan konten file untuk pola berbahaya"""
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
@@ -383,7 +390,7 @@ async def scan_file_content(file_path: str, choice: str) -> Tuple[List[Dict], Di
                 })
         
         # Analisis dengan AI atau manual
-        ai_summary, analyst = await get_ai_analysis(content, detected_issues, choice)
+        ai_summary, analyst = await get_ai_analysis(content, detected_issues, choice, interaction)
         
         return detected_issues, ai_summary, analyst
         
@@ -396,10 +403,16 @@ async def scan_file_content(file_path: str, choice: str) -> Tuple[List[Dict], Di
 # ============================
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Override default help command
-bot.remove_command('help')
+class MyClient(discord.Client):
+    def __init__(self, *, intents: discord.Intents):
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        await self.tree.sync()
+
+client = MyClient(intents=intents)
 
 def get_level_emoji_color(level: int) -> Tuple[str, int]:
     """Mendapatkan emoji dan warna berdasarkan level bahaya"""
@@ -412,62 +425,87 @@ def get_level_emoji_color(level: int) -> Tuple[str, int]:
     else:  # DANGEROUS
         return "🔴", 0xFF0000
 
-async def process_analysis(message_context, attachment, choice: str):
-    """Proses analisis file yang diunggah"""
+# Kelas helper untuk membuat objek mirip Interaction dari Message
+class InteractionFromMessage:
+    def __init__(self, message: discord.Message):
+        self.message = message
+        self.user = message.author
+        self.channel = message.channel
+        self.response_message = None
+
+    async def defer(self, thinking=True):
+        # Untuk on_message, kita bisa mengirim pesan "Thinking..."
+        self.response_message = await self.channel.send(f"⚙️ Menganalisis `{self.message.attachments[0].filename}`...")
+
+    async def followup(self, *args, **kwargs):
+        return await self.channel.send(*args, **kwargs)
+
+    async def edit_original_response(self, *args, **kwargs):
+        if self.response_message:
+            return await self.response_message.edit(*args, **kwargs)
+        # Jika belum ada pesan, kirim pesan baru
+        self.response_message = await self.channel.send(*args, **kwargs)
+        return self.response_message
+
+async def process_analysis(interaction, attachment: discord.Attachment, choice: str):
+    """Proses analisis file yang diunggah. Bisa menerima slash command interaction atau class wrapper."""
     
     # Cek channel permission
-    if ALLOWED_CHANNEL_IDS and message_context.channel.id not in ALLOWED_CHANNEL_IDS:
+    if ALLOWED_CHANNEL_IDS and interaction.channel.id not in ALLOWED_CHANNEL_IDS:
+        # Untuk slash command, kita perlu mengirim response
+        if isinstance(interaction, discord.Interaction):
+            await interaction.response.send_message("Perintah ini tidak dapat digunakan di channel ini.", ephemeral=True)
         return
     
     # Cek ekstensi file
     if not any(attachment.filename.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS):
-        await message_context.reply(
-            f"❌ **Format File Tidak Didukung**: `{attachment.filename}`\n"
-            f"**Format yang didukung**: {', '.join(ALLOWED_EXTENSIONS)}"
-        )
+        if isinstance(interaction, discord.Interaction):
+            await interaction.response.send_message(
+                f"❌ **Format File Tidak Didukung**: `{attachment.filename}`\n"
+                f"**Format yang didukung**: {', '.join(ALLOWED_EXTENSIONS)}",
+                ephemeral=True
+            )
         return
     
-    processing_message = None
+    # Defer response untuk memberikan waktu proses
+    if isinstance(interaction, discord.Interaction):
+        await interaction.response.defer(thinking=True)
+    else: # instance of InteractionFromMessage
+        await interaction.defer()
+
     download_path = os.path.join(TEMP_DIR, attachment.filename)
     
     try:
         # Cooldown untuk file arsip
         if attachment.filename.lower().endswith(('.zip', '.7z', '.rar')):
-            user_id = message_context.author.id
+            user_id = interaction.user.id
             current_time = time.time()
             
             if user_id in zip_cooldowns:
                 time_left = ZIP_COOLDOWN_SECONDS - (current_time - zip_cooldowns[user_id])
                 if time_left > 0:
-                    await message_context.reply(
-                        f"⏳ **Cooldown Aktif**\n"
-                        f"Harap tunggu **{int(time_left)} detik** lagi sebelum menganalisis arsip."
+                    await interaction.edit_original_response(
+                        content=f"⏳ **Cooldown Aktif**\n"
+                                f"Harap tunggu **{int(time_left)} detik** lagi sebelum menganalisis arsip."
                     )
                     return
             
             zip_cooldowns[user_id] = current_time
-            processing_message = await message_context.reply(
-                f"⚙️ **Menganalisis Arsip...**\n"
-                f"Mengekstrak dan memindai: `{attachment.filename}`"
-            )
-        
+
         # Download file
         await attachment.save(download_path)
         
-        # Inisialisasi variabel hasil
         all_issues = []
         scanned_files = []
         all_ai_summaries = []
         analysts = set()
         
-        # Tentukan file yang akan discan
         scan_paths = []
         extract_folder = os.path.join(TEMP_DIR, "extracted")
         
         if attachment.filename.lower().endswith(('.zip', '.7z', '.rar')):
-            # Ekstrak arsip
             if extract_archive(download_path, extract_folder):
-                for root, dirs, files in os.walk(extract_folder):
+                for root, _, files in os.walk(extract_folder):
                     for file in files:
                         if file.endswith(('.lua', '.txt')):
                             file_path = os.path.join(root, file)
@@ -476,12 +514,11 @@ async def process_analysis(message_context, attachment, choice: str):
             else:
                 raise Exception("Gagal mengekstrak arsip")
         else:
-            # File tunggal
             scan_paths.append((download_path, attachment.filename))
         
         # Scan semua file
         for file_path, display_name in scan_paths:
-            issues, ai_summary, analyst = await scan_file_content(file_path, choice)
+            issues, ai_summary, analyst = await scan_file_content(file_path, choice, interaction)
             
             scanned_files.append(display_name)
             analysts.add(analyst)
@@ -492,19 +529,15 @@ async def process_analysis(message_context, attachment, choice: str):
             if ai_summary:
                 all_ai_summaries.append(ai_summary)
         
-        # Cleanup extracted files
         if os.path.exists(extract_folder):
             shutil.rmtree(extract_folder)
         
-        # Tentukan level bahaya tertinggi
         best_summary = max(all_ai_summaries, key=lambda x: x.get('danger_level', 0), default={})
         max_level = best_summary.get('danger_level', DangerLevel.SAFE)
         
-        # Buat embed response
         emoji, color = get_level_emoji_color(max_level)
         embed = discord.Embed(color=color)
         
-        # Title berdasarkan level
         level_titles = {
             DangerLevel.SAFE: "✅ AMAN",
             DangerLevel.SUSPICIOUS: "🤔 MENCURIGAKAN", 
@@ -514,14 +547,14 @@ async def process_analysis(message_context, attachment, choice: str):
         
         embed.title = f"{emoji} **{level_titles.get(max_level, 'HASIL SCAN')}**"
         embed.description = (
+            f"**File:** `{attachment.filename}`\n"
             f"**Tujuan Script:** {best_summary.get('script_purpose', 'N/A')}\n"
             f"**Ringkasan AI:** {best_summary.get('analysis_summary', 'N/A')}"
         )
         
-    # Detail pola yang terdeteksi
         if all_issues:
             field_value = ""
-            for filepath, issue in all_issues[:10]:  # Tampilkan max 10 issues
+            for filepath, issue in all_issues[:10]:
                 field_value += f"📁 `{filepath}`  `{issue['pattern']}` di (Line {issue['line']})\n"
             
             if len(all_issues) > 10:
@@ -533,94 +566,70 @@ async def process_analysis(message_context, attachment, choice: str):
                 inline=False
             )
         
-        # Footer dengan info analyst
         analyst_text = ", ".join(sorted(list(analysts)))
         embed.set_footer(
             text= f"Dianalisis oleh: {analyst_text} • {len(scanned_files)} file diperiksa\n"
-            "NOTE: Jika di analisis oleh AI gemini maupun OpenAI, Baca Deskripsinya dengan teliti karena!\n"
-            "Script cheat/ilegal biasa dikategorikan DANGEROUS/BERBAHAYA oleh AI. padahal aman\n"
-            "Gunakan !scan manual atau !help jika Anda ragu.\n"
+            "NOTE: Jika dianalisis oleh AI, baca deskripsinya dengan teliti!\n"
+            "Script cheat/ilegal biasa dikategorikan DANGEROUS oleh AI, padahal aman.\n"
+            "Gunakan /scan analyst:Manual jika Anda ragu.\n"
             "Created by Kotkaaja"
-            )
-        # Send/edit response
-        if processing_message:
-            await processing_message.edit(content=None, embed=embed)
-        else:
-            await message_context.reply(embed=embed)
+        )
         
-        # Send alert jika berbahaya
+        await interaction.edit_original_response(content=None, embed=embed)
+        
         if max_level >= DangerLevel.DANGEROUS and ALERT_CHANNEL_ID:
-            alert_channel = bot.get_channel(ALERT_CHANNEL_ID)
+            alert_channel = client.get_channel(ALERT_CHANNEL_ID)
             if alert_channel:
                 await alert_channel.send(
                     f"🚨 **PERINGATAN KEAMANAN**\n"
-                    f"Ditemukan file berbahaya oleh {message_context.author.mention} "
-                    f"di {message_context.channel.mention}",
+                    f"Ditemukan file berbahaya oleh {interaction.user.mention} "
+                    f"di {interaction.channel.mention}",
                     embed=embed
                 )
     
     except Exception as e:
         error_msg = f"❌ **Error saat menganalisis file**: {str(e)}"
-        if processing_message:
-            await processing_message.edit(content=error_msg)
-        else:
-            await message_context.reply(error_msg)
+        await interaction.edit_original_response(content=error_msg, embed=None)
         print(f"❌ Process Analysis Error: {e}")
     
     finally:
-        # Cleanup
         if os.path.exists(download_path):
             os.remove(download_path)
 
 # ============================
 # EVENTS & COMMANDS
 # ============================
-@bot.event
+@client.event
 async def on_ready():
-    print(f'🤖 Bot scanner siap! Login sebagai {bot.user}')
+    print(f'🤖 Bot scanner siap! Login sebagai {client.user}')
     if not os.path.exists(TEMP_DIR):
         os.makedirs(TEMP_DIR)
     
-    # Show available analysts
     available_analysts = []
-    if OPENAI_API_KEYS:
-        available_analysts.append(f"OpenAI ({len(OPENAI_API_KEYS)} keys)")
     if GEMINI_API_KEYS:
         available_analysts.append(f"Gemini ({len(GEMINI_API_KEYS)} keys)")
+    if OPENAI_API_KEYS:
+        available_analysts.append(f"OpenAI ({len(OPENAI_API_KEYS)} keys)")
     available_analysts.append("Manual")
     
-    print(f"📊 Available analysts: {', '.join(available_analysts)}")
+    print(f"📊 Available analysts (Prioritas): {', '.join(available_analysts)}")
 
-@bot.command(name='scan', help='Memindai file dengan analis pilihan')
-async def scan_command(ctx, analyst: str = 'auto'):
-    """
-    Memindai file dengan analis pilihan
-    Usage: !scan [auto|openai|gemini|manual]
-    Default: auto
-    """
-    analyst = analyst.lower()
-    valid_analysts = ['auto', 'openai', 'gemini', 'manual']
-    
-    if analyst not in valid_analysts:
-        await ctx.reply(
-            f"❌ **Pilihan analis tidak valid!**\n"
-            f"**Pilihan yang tersedia**: {', '.join(valid_analysts)}\n"
-            f"**Contoh**: `!scan auto` atau `!scan openai`"
-        )
-        return
-    
-    if not ctx.message.attachments:
-        await ctx.reply(
-            f"❌ **Tidak ada file yang diunggah!**\n"
-            f"Silakan unggah file bersamaan dengan perintah `!scan {analyst}`"
-        )
-        return
-    
-    await process_analysis(ctx, ctx.message.attachments[0], choice=analyst)
+@client.tree.command(name="scan", description="Memindai file dengan analis pilihan")
+@app_commands.describe(
+    analyst="Pilih analis yang akan digunakan (default: Auto)",
+    file="File script yang akan dipindai"
+)
+@app_commands.choices(analyst=[
+    app_commands.Choice(name="Auto (Gemini -> OpenAI -> Manual)", value="auto"),
+    app_commands.Choice(name="Gemini", value="gemini"),
+    app_commands.Choice(name="OpenAI", value="openai"),
+    app_commands.Choice(name="Manual", value="manual"),
+])
+async def scan_command(interaction: discord.Interaction, file: discord.Attachment, analyst: str = "auto"):
+    await process_analysis(interaction, file, choice=analyst)
 
-@bot.command(name='help', help='Menampilkan bantuan')
-async def help_command(ctx):
-    """Menampilkan bantuan penggunaan bot"""
+@client.tree.command(name="help", description="Menampilkan bantuan penggunaan bot")
+async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🛡️ Lua Security Scanner Bot - Bantuan",
         color=0x3498db
@@ -628,24 +637,19 @@ async def help_command(ctx):
     
     embed.add_field(
         name="🔍 Cara Scan Otomatis",
-        value="Upload file langsung ke chat (tanpa command)",
+        value="Upload file `.lua`, `.txt`, atau arsip (`.zip`, `.7z`, `.rar`) langsung ke channel yang diizinkan.",
         inline=False
     )
     
     embed.add_field(
-        name="⚙️ Scan dengan Pilihan Analyst",
+        name="⚙️ Perintah /scan",
         value=(
-            "`!scan auto` - OpenAI → Gemini → Manual\n"
-            "`!scan openai` - Hanya OpenAI\n"
-            "`!scan gemini` - Hanya Gemini\n"
-            "`!scan manual` - Analisis pattern manual"
+            "Gunakan perintah `/scan` untuk memilih analis secara manual dan melampirkan file Anda.\n"
+            "`/scan file:[file] analyst:Auto` - (Default) Gemini → OpenAI → Manual\n"
+            "`/scan file:[file] analyst:Gemini` - Hanya Gemini\n"
+            "`/scan file:[file] analyst:OpenAI` - Hanya OpenAI\n"
+            "`/scan file:[file] analyst:Manual` - Analisis pattern manual"
         ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="📂 Format File Didukung",
-        value=f"`{', '.join(ALLOWED_EXTENSIONS)}`",
         inline=False
     )
     
@@ -660,67 +664,48 @@ async def help_command(ctx):
         inline=False
     )
     
-    # Show available analysts with new priority
     analysts_info = []
     if GEMINI_API_KEYS:
-        analysts_info.append(f"🧠 Gemini ({len(GEMINI_API_KEYS)} keys) - Priority 1")
+        analysts_info.append(f"🧠 Gemini ({len(GEMINI_API_KEYS)} keys) - **Prioritas 1**")
     if OPENAI_API_KEYS:
-        analysts_info.append(f"🤖 OpenAI ({len(OPENAI_API_KEYS)} keys) - Priority 2")
+        analysts_info.append(f"🤖 OpenAI ({len(OPENAI_API_KEYS)} keys) - Prioritas 2")
     analysts_info.append("🔧 Manual Pattern Matching - Fallback")
     
     embed.add_field(
-        name="🤖 Available Analysts (New Priority Order)",
+        name="🤖 Urutan Analis Otomatis",
         value="\n".join(f"• {analyst}" for analyst in analysts_info),
         inline=False
     )
     
-    embed.set_footer(text="Created by Kotkaaja • Bot akan otomatis fallback ke analyst lain jika terjadi error")
-    
-    await ctx.reply(embed=embed)
+    embed.set_footer(text="Created by Kotkaaja • Bot akan otomatis fallback jika terjadi error")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.event
-async def on_message(message):
-    # Jangan proses message dari bot sendiri atau command
-    if message.author == bot.user or message.content.startswith('!'):
-        await bot.process_commands(message)  # Tetap proses commands
+@client.event
+async def on_message(message: discord.Message):
+    if message.author == client.user:
         return
     
-    # Auto-scan jika ada attachment
+    if ALLOWED_CHANNEL_IDS and message.channel.id not in ALLOWED_CHANNEL_IDS:
+        return
+        
     if message.attachments:
-        await process_analysis(message, message.attachments[0], choice='auto')
-# Tambahkan perintah ini di bagian EVENTS & COMMANDS di file bot.py Anda
-
-@bot.command(name='serverlist', help='Menampilkan daftar server tempat bot berada')
-@commands.is_owner() # <-- Baris ini penting! Membuat perintah hanya bisa dijalankan oleh Anda (pemilik bot)
-async def server_list_command(ctx):
-    """Menampilkan daftar server di mana bot aktif."""
-    server_list = []
-    for guild in bot.guilds:
-        server_list.append(f"- **{guild.name}** (ID: `{guild.id}`)")
-
-    if not server_list:
-        await ctx.send("Bot saat ini tidak berada di server mana pun.")
-        return
-
-    embed = discord.Embed(
-        title=f"Bot Aktif di {len(bot.guilds)} Server",
-        description="\n".join(server_list),
-        color=0x3498db
-    )
-    await ctx.author.send(embed=embed) # Mengirim daftar ke DM Anda agar tidak spam di chat publik
-    await ctx.message.add_reaction('✅') # Memberi tanda bahwa perintah berhasil dijalankan
-
-# Tambahan: Pastikan Anda sudah mengimpor commands di bagian atas
-# from discord.ext import commands
+        # Buat 'pseudo-interaction' object untuk konsistensi
+        interaction_wrapper = InteractionFromMessage(message)
+        # Proses analisis dengan attachment pertama dan mode 'auto'
+        await process_analysis(interaction_wrapper, message.attachments[0], 'auto')
 
 # ============================
 # JALANKAN BOT
 # ============================
 if __name__ == "__main__":
-    print("🚀 Memulai Lua Security Scanner Bot...")
-    print("="*50)
-    try:
-        bot.run(BOT_TOKEN)
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
-        exit()
+    if not BOT_TOKEN:
+        print("❌ FATAL ERROR: BOT_TOKEN tidak ada di environment variables.")
+    else:
+        print("🚀 Memulai Lua Security Scanner Bot...")
+        print("="*50)
+        try:
+            client.run(BOT_TOKEN)
+        except discord.errors.LoginFailure:
+            print("❌ FATAL ERROR: Gagal login. Pastikan BOT_TOKEN Anda valid.")
+        except Exception as e:
+            print(f"❌ FATAL ERROR: Terjadi kesalahan saat menjalankan bot: {e}")
