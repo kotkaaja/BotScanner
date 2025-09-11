@@ -33,6 +33,7 @@ DEEPSEEK_API_KEYS = os.getenv("DEEPSEEK_API_KEYS", "").split(',')
 ALERT_CHANNEL_ID = os.getenv("ALERT_CHANNEL_ID")
 ALLOWED_CHANNEL_IDS = os.getenv("ALLOWED_CHANNEL_IDS")
 ADMIN_CHANNEL_ID = os.getenv("ADMIN_CHANNEL_ID")  # Untuk notifikasi admin
+ADMIN_USER_IDS = os.getenv("ADMIN_USER_IDS", "").split(',')  # Comma-separated admin user IDs
 
 # Konstanta - Optimized for Railway free tier
 ALLOWED_EXTENSIONS = ['.lua', '.txt', '.zip', '.7z', '.rar', '.py', '.js', '.php']
@@ -1553,7 +1554,7 @@ async def help_command(ctx):
 async def clear_cache_command(ctx):
     """Clear bot cache (admin only)"""
     # Replace YOUR_ADMIN_USER_ID dengan user ID Anda
-    ADMIN_USER_IDS = [123456789, 987654321]  # Ganti dengan ID admin yang sebenarnya
+    ADMIN_USER_IDS = [int(id.strip()) for id in ADMIN_USER_IDS if id.strip()]# Ganti dengan ID admin yang sebenarnya
     
     if ctx.author.id not in ADMIN_USER_IDS:
         await ctx.send("❌ **Access denied.** Admin only command.")
