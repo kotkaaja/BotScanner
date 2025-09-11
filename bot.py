@@ -38,11 +38,11 @@ ADMIN_USER_IDS = os.getenv("ADMIN_USER_IDS", "").split(',')  # Comma-separated a
 # Konstanta - Optimized for Railway free tier
 ALLOWED_EXTENSIONS = ['.lua', '.txt', '.zip', '.7z', '.rar', '.py', '.js', '.php']
 TEMP_DIR = "temp_scan"
-MAX_FILE_SIZE_MB = 2  # Max 2MB untuk mencegah overload
-MAX_ARCHIVE_FILES = 20  # Max 20 files per archive
-COMMAND_COOLDOWN_SECONDS = 30  # Cooldown per user per command
-DAILY_LIMIT_PER_USER = 50  # Max 50 scan per user per hari
-QUEUE_MAX_SIZE = 5  # Max 5 concurrent operations
+MAX_FILE_SIZE_MB = 1  # Max 1MB untuk mencegah overload
+MAX_ARCHIVE_FILES = 10  # Max 10 files per archive
+COMMAND_COOLDOWN_SECONDS = 40  # Cooldown per user per command
+DAILY_LIMIT_PER_USER = 20  # Max 20 scan per user per hari
+QUEUE_MAX_SIZE = 3  # Max 3 concurrent operations
 CACHE_EXPIRE_HOURS = 24  # Cache expire dalam 24 jam
 
 # Global variables
@@ -388,8 +388,8 @@ Berikut adalah isi skrip yang harus dianalisis:
 
 Berikan jawaban HANYA dalam format JSON yang valid berikut:
 {{
-    "script_purpose": "Deskripsi singkat dan jelas mengenai tujuan utama skrip ini",
-    "analysis_summary": "Penjelasan mendalam mengenai apa yang dilakukan script, potensi risiko, dan konteks penggunaan",
+    "script_purpose": "Penjelasan singkat dan jelas mengenai tujuan utama skrip ini.",
+    "analysis_summary": "Penjelasan ringkas mengapa skrip ini berbahaya dan apa saja risikonya.",
     "confidence_score": <1-100 (tingkat keyakinan analisis Anda)>
 }}
 """
@@ -512,7 +512,7 @@ async def get_ai_analysis_with_voting(code_snippet: str, detected_issues: List[D
         
         # Coba semua AI yang available
         for ai_type, keys, analyzer in [
-            ("DeepSeek", DEEPSEEK_API_KEYS, analyze_with_deepseek),
+           # ("DeepSeek", DEEPSEEK_API_KEYS, analyze_with_deepseek), # DeepSeek dalam perbaikan
             ("Gemini", GEMINI_API_KEYS, analyze_with_gemini),
             ("OpenAI", OPENAI_API_KEYS, analyze_with_openai)
         ]:
@@ -532,7 +532,7 @@ async def get_ai_analysis_with_voting(code_snippet: str, detected_issues: List[D
     if not ai_results:
         # Prioritas: DeepSeek -> Gemini -> OpenAI -> Manual
         for ai_type, keys, analyzer in [
-            ("DeepSeek", DEEPSEEK_API_KEYS if choice in ['auto', 'deepseek'] else [], analyze_with_deepseek),
+            #("DeepSeek", DEEPSEEK_API_KEYS if choice in ['auto', 'deepseek'] else [], analyze_with_deepseek), # DeepSeek dalam perbaikan
             ("Gemini", GEMINI_API_KEYS if choice in ['auto', 'gemini'] else [], analyze_with_gemini),
             ("OpenAI", OPENAI_API_KEYS if choice in ['auto', 'openai'] else [], analyze_with_openai)
         ]:
@@ -1240,7 +1240,12 @@ async def scan_command(ctx, analyst="auto", *, url=None):
     - openai: Hanya OpenAI
     - manual: Analisis pattern manual
     """
-    
+    # === MODIFIKASI DIMULAI DI SINI ===
+    if analyst.lower() == 'deepseek':
+        await ctx.send("⚙️ **Pemberitahuan:** Analyst DeepSeek sedang dalam perbaikan. Silakan gunakan analyst lain (`auto`, `gemini`, `openai`).")
+        return
+    # === MODIFIKASI SELESAI ===
+
     valid_analysts = ["auto", "deepseek", "gemini", "openai", "manual"]
     if analyst.lower() not in valid_analysts:
         await ctx.send(f"❌ **Analyst tidak valid**: `{analyst}`\n"
@@ -1480,9 +1485,12 @@ async def help_command(ctx):
         value=(
             "`!scan` - Scan file dengan analyst auto\n"
             "`!scan [analyst]` - Pilih analyst tertentu\n"
+            "`contoh: !scan deepseek` lalu upload file\n"
             "`!scan [analyst] [URL]` - Scan dari URL\n"
+            "`contoh: !scan deepseek https://example.com/file.lua\n\n"
             "`!history [limit]` - Lihat riwayat scan (max 20)\n"
             "`!stats` - Statistik bot dan penggunaan\n"
+            "`!clearcache` - Hapus cache bot (admin only)\n"
             "`!help` - Tampilkan bantuan ini"
         ),
         inline=False
@@ -1492,7 +1500,7 @@ async def help_command(ctx):
         name="🤖 Analysts",
         value=(
             "• `auto` - DeepSeek → Gemini → OpenAI → Manual\n"
-            "• `deepseek` - Hanya DeepSeek AI\n"
+            "• `deepseek` - Hanya DeepSeek AI #dalam perbaikan\n"
             "• `gemini` - Hanya Google Gemini\n"
             "• `openai` - Hanya OpenAI GPT\n"
             "• `manual` - Pattern matching saja"
@@ -1553,10 +1561,10 @@ async def help_command(ctx):
 @bot.command(name="clearcache", hidden=True)
 async def clear_cache_command(ctx):
     """Clear bot cache (admin only)"""
-    # Replace YOUR_ADMIN_USER_ID dengan user ID Anda
-    ADMIN_USER_IDS = [int(id.strip()) for id in ADMIN_USER_IDS if id.strip()]# Ganti dengan ID admin yang sebenarnya
+    # Menggunakan nama variabel 'admin_ids' untuk menghindari konflik
+    admin_ids = [int(id.strip()) for id in ADMIN_USER_IDS if id.strip()]
     
-    if ctx.author.id not in ADMIN_USER_IDS:
+    if ctx.author.id not in admin_ids:
         await ctx.send("❌ **Access denied.** Admin only command.")
         return
     
